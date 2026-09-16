@@ -1,0 +1,152 @@
+from agents.research_agent import ResearchAgent
+from agents.analyst_agent import QuantitativeSportsAnalyst
+from agents.risk_manager import RiskManager
+from agents.cfo_agent import CFOAgent
+from agents.auditor_agent import AuditorAgent
+from agents.investment_committee import InvestmentCommittee
+
+
+def main():
+    print("=" * 70)
+    print("BETTING AI — FULL PIPELINE TEST")
+    print("=" * 70)
+
+    # =========================================================
+    # 1. RESEARCH
+    # =========================================================
+
+    print("\n[1/6] RESEARCH AGENT")
+    print("-" * 70)
+
+    research_agent = ResearchAgent()
+    research = research_agent.run()
+
+    print("Status:", research.get("status"))
+
+    if research.get("status") != "success":
+        print("\nRESEARCH FAILED:")
+        print(research)
+        return
+
+    # =========================================================
+    # 2. ANALYST
+    # =========================================================
+
+    print("\n[2/6] QUANTITATIVE SPORTS ANALYST")
+    print("-" * 70)
+
+    analyst = QuantitativeSportsAnalyst()
+    analysis = analyst.run(research)
+
+    print("Status:", analysis.get("status"))
+
+    if analysis.get("status") != "success":
+        print("\nANALYSIS FAILED:")
+        print(analysis)
+        return
+
+    # =========================================================
+    # 3. RISK MANAGER
+    # =========================================================
+
+    print("\n[3/6] RISK MANAGER")
+    print("-" * 70)
+
+    risk_manager = RiskManager()
+    risk = risk_manager.run(analysis)
+
+    print("Status:", risk.get("status"))
+    print("Stake decision:", risk.get("stake_decision"))
+
+    # =========================================================
+    # 4. CFO
+    # =========================================================
+
+    print("\n[4/6] CFO & ACCOUNTING MANAGER")
+    print("-" * 70)
+
+    cfo = CFOAgent()
+    financial_review = cfo.run(risk)
+
+    print("Status:", financial_review.get("status"))
+    print("Financial status:", financial_review.get("financial_status"))
+    print("Bank status:", financial_review.get("bank_status"))
+
+    # =========================================================
+    # 5. AUDITOR
+    # =========================================================
+
+    print("\n[5/6] AUDITOR AGENT")
+    print("-" * 70)
+
+    system_data = {
+        "research": research,
+        "analysis": analysis,
+        "risk": risk,
+        "financial_review": financial_review,
+    }
+
+    auditor = AuditorAgent()
+    audit = auditor.run(system_data)
+
+    print("Status:", audit.get("status"))
+    print("Audit status:", audit.get("audit_status"))
+    print("Recommendation:", audit.get("recommendation"))
+
+    errors = audit.get("errors_found", [])
+    warnings = audit.get("warnings", [])
+
+    if errors:
+        print("\nAUDIT ERRORS:")
+        for error in errors:
+            print(" -", error)
+
+    if warnings:
+        print("\nAUDIT WARNINGS:")
+        for warning in warnings:
+            print(" -", warning)
+
+    # =========================================================
+    # 6. INVESTMENT COMMITTEE
+    # =========================================================
+
+    print("\n[6/6] INVESTMENT COMMITTEE")
+    print("-" * 70)
+
+    committee_package = {
+        "risk": risk,
+        "financial_review": financial_review,
+        "audit": audit,
+    }
+
+    committee = InvestmentCommittee()
+    decision = committee.run(committee_package)
+
+    # =========================================================
+    # FINAL RESULT
+    # =========================================================
+
+    print("\n")
+    print("=" * 70)
+    print("FINAL INVESTMENT COMMITTEE DECISION")
+    print("=" * 70)
+
+    print("Decision:", decision.get("decision"))
+    print("Reason:", decision.get("reason"))
+
+    approved = decision.get("approved_candidates", [])
+
+    print("Approved candidates:", len(approved))
+
+    if approved:
+        print("\nAPPROVED CANDIDATES:")
+        for candidate in approved:
+            print(candidate)
+
+    print("\n" + "=" * 70)
+    print("FULL PIPELINE TEST COMPLETE")
+    print("=" * 70)
+
+
+if __name__ == "__main__":
+    main()

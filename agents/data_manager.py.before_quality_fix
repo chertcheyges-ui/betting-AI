@@ -1,0 +1,1412 @@
+"""Data Manager for the betting pipeline.
+
+Uses local historical Premier League data for model features when the
+fixture belongs to a compatible local dataset and API-Football for
+current-match information such as H2H, injuries, lineups and odds.
+"""
+
+import json
+import os
+from collections.abc import Mapping, Sequence
+from datetime import datetime, timezone
+import requests
+from dotenv import load_dotenv
+
+
+load_dotenv()
+
+
+class DataManager:
+    """Collect and prepare historical and current football data."""
+
+    REQUIRED_FIELDS = (
+        "recent_form",
+        "home_away_form",
+        "h2h",
+        "injuries",
+        "lineups",
+        "odds",
+        "schedule_load",
+    )
+
+    HISTORY_FILES = (
+        "data/raw/premier_league_2022.json",
+        "data/raw/premier_league_2023.json",
+        "data/raw/premier_league_2024.json",
+    )
+
+    # These files contain Premier League data.
+    LOCAL_LEAGUE_NAME = "Premier League"
+
+    def __init__(self, api_key=None, session=None, max_fixtures=20):
+        self.name = "Data Manager"
+
+        self.api_key = api_key or os.getenv("API_FOOTBALL_KEY")
+
+        self.session = session or requests.Session()
+
+        self.max_fixtures = max_fixtures
+
+        self.base_url = "https://v3.football.api-sports.io"
+
+        self._cache = {}
+
+        self.history = []
+
+        self._load_history()
+
+    # =========================================================
+    # LOCAL HISTORICAL DATA
+    # =========================================================
+
+    def _load_history(self):
+        """Load all available local historical fixtures."""
+
+        history = []
+
+        for path in self.HISTORY_FILES:
+            if not os.path.exists(path):
+                continue
+
+            try:
+                with open(path, "r", encoding="utf-8") as file:
+                    data = json.load(file)
+
+                if isinstance(data, list):
+                    history.extend(data)
+
+            except (OSError, json.JSONDecodeError):
+                continue
+
+        # Keep only actual completed fixtures.
+        cleaned = []
+
+        for match in history:
+            if not isinstance(match, Mapping):
+                continue
+
+            home = match.get("home_team")
+            away = match.get("away_team")
+            date = self._parse_date(match.get("date"))
+
+            home_goals = match.get("home_goals")
+            away_goals = match.get("away_goals")
+
+            if not home or not away or not date:
+                continue
+
+            if home_goals is None or away_goals is None:
+                continue
+
+            cleaned.append(dict(match))
+
+        cleaned.sort(
+            key=lambda item: (
+                self._parse_date(item.get("date"))
+                or datetime.min.replace(tzinfo=timezone.utc)
+            )
+        )
+
+        self.history = cleaned
+
+        print(f"Historical fixtures loaded: {len(self.history)}")
+
+    @staticmethod
+    def _parse_date(value):
+        """Parse ISO date safely."""
+
+        if not value:
+            return None
+
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                return value.replace(tzinfo=timezone.utc)
+
+            return value
+
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+        except (ValueError, TypeError):
+            return None
+
+    @staticmethod
+    def _normalise_name(value):
+        """Normalise team/league names for comparisons."""
+
+        if value is None:
+            return ""
+
+        return str(value).strip().lower().replace("_", " ")
+
+    @staticmethod
+    def _match_result(home_goals, away_goals):
+        """Return match result."""
+
+        if home_goals is None or away_goals is None:
+            return None
+
+        if home_goals > away_goals:
+            return "HOME_WIN"
+
+        if home_goals < away_goals:
+            return "AWAY_WIN"
+
+        return "DRAW"
+
+    @staticmethod
+    def _points(result, team_is_home):
+        """Return league points for a team."""
+
+        if result == "DRAW":
+            return 1
+
+        if team_is_home and result == "HOME_WIN":
+            return 3
+
+        if not team_is_home and result == "AWAY_WIN":
+            return 3
+
+        return 0
+
+    def _history_matches_compatible_with_event(self, event):
+        """Check whether local history is appropriate for this fixture.
+
+        The bundled local data is Premier League data. It should not be
+        used as historical form for La Liga, Serie A, etc.
+        """
+
+        if not isinstance(event, Mapping):
+            return False
+
+        league = event.get("league")
+
+        if isinstance(league, Mapping):
+            league_name = league.get("name")
+        else:
+            league_name = league
+
+        # If the event explicitly identifies another league, do not use
+        # Premier League local history.
+        if league_name:
+            return self._normalise_name(league_name) == self._normalise_name(
+                self.LOCAL_LEAGUE_NAME
+            )
+
+        # Some ResearchAgent implementations may expose league_name.
+        league_name = event.get("league_name")
+
+        if league_name:
+            return self._normalise_name(league_name) == self._normalise_name(
+                self.LOCAL_LEAGUE_NAME
+            )
+
+        # If league is completely unknown, don't make assumptions.
+        return False
+
+    def _team_exists_in_local_history(self, team_name):
+        """Check whether a team exists in the local dataset."""
+
+        if not team_name:
+            return False
+
+        normalised = self._normalise_name(team_name)
+
+        for match in self.history:
+            home = self._normalise_name(match.get("home_team"))
+
+            away = self._normalise_name(match.get("away_team"))
+
+            if normalised in (home, away):
+                return True
+
+        return False
+
+    def _local_history_available(self, event):
+        """Return True when local history can safely be used."""
+
+        if not self._history_matches_compatible_with_event(event):
+            return False
+
+        home = event.get("home")
+        away = event.get("away")
+
+        if not home or not away:
+            return False
+
+        return self._team_exists_in_local_history(
+            home
+        ) and self._team_exists_in_local_history(away)
+
+    def _team_matches_before(self, team_name, before_date):
+        """Return completed historical matches before a fixture."""
+
+        if not team_name or not before_date:
+            return []
+
+        matches = []
+
+        target = self._normalise_name(team_name)
+
+        for match in self.history:
+            match_date = self._parse_date(match.get("date"))
+
+            if not match_date:
+                continue
+
+            if match_date >= before_date:
+                continue
+
+            home = self._normalise_name(match.get("home_team"))
+
+            away = self._normalise_name(match.get("away_team"))
+
+            if target not in (home, away):
+                continue
+
+            home_goals = match.get("home_goals")
+            away_goals = match.get("away_goals")
+
+            if home_goals is None or away_goals is None:
+                continue
+
+            matches.append(match)
+
+        matches.sort(
+            key=lambda item: (
+                self._parse_date(item.get("date"))
+                or datetime.min.replace(tzinfo=timezone.utc)
+            )
+        )
+
+        return matches
+
+    # =========================================================
+    # FORM
+    # =========================================================
+
+    def _empty_recent_form(self):
+        """Return a valid empty recent-form structure."""
+
+        return {
+            "matches": 0,
+            "points": 0,
+            "points_per_game": 0.0,
+            "goal_difference": 0,
+            "goals_for": 0,
+            "goals_against": 0,
+            "wins": 0,
+            "draws": 0,
+            "losses": 0,
+            "win_rate": 0.0,
+            "draw_rate": 0.0,
+            "loss_rate": 0.0,
+        }
+
+    def _recent_form(
+        self,
+        team_name,
+        before_date,
+        limit=5,
+    ):
+        """Calculate recent form over the last N matches."""
+
+        matches = self._team_matches_before(
+            team_name,
+            before_date,
+        )
+
+        matches = matches[-limit:]
+
+        points = 0
+        wins = 0
+        draws = 0
+        losses = 0
+
+        goal_difference = 0
+        goals_for = 0
+        goals_against = 0
+
+        for match in matches:
+            home = match.get("home_team")
+
+            home_goals = match.get("home_goals")
+            away_goals = match.get("away_goals")
+
+            if home_goals is None or away_goals is None:
+                continue
+
+            is_home = self._normalise_name(home) == self._normalise_name(team_name)
+
+            result = self._match_result(
+                home_goals,
+                away_goals,
+            )
+
+            points += self._points(
+                result,
+                is_home,
+            )
+
+            if is_home:
+                gf = home_goals
+                ga = away_goals
+            else:
+                gf = away_goals
+                ga = home_goals
+
+            goals_for += gf
+            goals_against += ga
+            goal_difference += gf - ga
+
+            if result == "DRAW":
+                draws += 1
+
+            elif (is_home and result == "HOME_WIN") or (
+                not is_home and result == "AWAY_WIN"
+            ):
+                wins += 1
+
+            else:
+                losses += 1
+
+        count = len(matches)
+
+        return {
+            "matches": count,
+            "points": points,
+            "points_per_game": (points / count if count else 0.0),
+            "goal_difference": goal_difference,
+            "goals_for": goals_for,
+            "goals_against": goals_against,
+            "wins": wins,
+            "draws": draws,
+            "losses": losses,
+            "win_rate": (wins / count if count else 0.0),
+            "draw_rate": (draws / count if count else 0.0),
+            "loss_rate": (losses / count if count else 0.0),
+        }
+
+    def _empty_home_away_form(self):
+        """Return a valid empty home/away form."""
+
+        return {
+            "matches": 0,
+            "points_per_game": 0.0,
+            "goals_for": 0,
+            "goals_against": 0,
+            "goal_difference": 0,
+            "win_rate": 0.0,
+            "wins": 0,
+            "draws": 0,
+            "losses": 0,
+        }
+
+    def _home_away_form(
+        self,
+        team_name,
+        before_date,
+        is_home,
+        limit=5,
+    ):
+        """Calculate home-only or away-only recent form."""
+
+        matches = self._team_matches_before(
+            team_name,
+            before_date,
+        )
+
+        filtered = []
+
+        target = self._normalise_name(team_name)
+
+        for match in matches:
+            home = self._normalise_name(match.get("home_team"))
+
+            away = self._normalise_name(match.get("away_team"))
+
+            if is_home and home == target:
+                filtered.append(match)
+
+            elif not is_home and away == target:
+                filtered.append(match)
+
+        filtered = filtered[-limit:]
+
+        points = 0
+        wins = 0
+        draws = 0
+        losses = 0
+        goal_difference = 0
+        goals_for = 0
+        goals_against = 0
+
+        for match in filtered:
+            hg = match.get("home_goals")
+            ag = match.get("away_goals")
+
+            if hg is None or ag is None:
+                continue
+
+            if is_home:
+                gf = hg
+                ga = ag
+                win = hg > ag
+                loss = hg < ag
+
+            else:
+                gf = ag
+                ga = hg
+                win = ag > hg
+                loss = ag < hg
+
+            goals_for += gf
+            goals_against += ga
+            goal_difference += gf - ga
+
+            if win:
+                points += 3
+                wins += 1
+
+            elif loss:
+                losses += 1
+
+            else:
+                points += 1
+                draws += 1
+
+        count = len(filtered)
+
+        return {
+            "matches": count,
+            "points_per_game": (points / count if count else 0.0),
+            "goals_for": goals_for,
+            "goals_against": goals_against,
+            "goal_difference": goal_difference,
+            "win_rate": (wins / count if count else 0.0),
+            "wins": wins,
+            "draws": draws,
+            "losses": losses,
+        }
+
+    # =========================================================
+    # SCHEDULE LOAD
+    # =========================================================
+
+    def _schedule_load(
+        self,
+        team_name,
+        before_date,
+    ):
+        """Measure recent fixture congestion."""
+
+        matches = self._team_matches_before(
+            team_name,
+            before_date,
+        )
+
+        if not matches:
+            return {
+                "matches_last_14_days": 0,
+                "matches_last_30_days": 0,
+                "days_since_last_match": None,
+            }
+
+        recent_14 = 0
+        recent_30 = 0
+
+        for match in matches:
+            match_date = self._parse_date(match.get("date"))
+
+            if not match_date:
+                continue
+
+            delta = before_date - match_date
+
+            days = delta.total_seconds() / 86400
+
+            if 0 <= days <= 14:
+                recent_14 += 1
+
+            if 0 <= days <= 30:
+                recent_30 += 1
+
+        last_date = self._parse_date(matches[-1].get("date"))
+
+        days_since = None
+
+        if last_date:
+            delta = before_date - last_date
+            days_since = max(
+                0,
+                int(delta.total_seconds() // 86400),
+            )
+
+        return {
+            "matches_last_14_days": recent_14,
+            "matches_last_30_days": recent_30,
+            "days_since_last_match": days_since,
+        }
+
+    # =========================================================
+    # API
+    # =========================================================
+
+    def _get(self, endpoint, **params):
+        """GET data from API-Football with simple in-memory caching."""
+
+        cache_key = (
+            endpoint,
+            tuple(
+                sorted(
+                    (
+                        str(key),
+                        str(value),
+                    )
+                    for key, value in params.items()
+                )
+            ),
+        )
+
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
+        if not self.api_key:
+            result = (
+                None,
+                "API_FOOTBALL_KEY not found",
+            )
+
+            self._cache[cache_key] = result
+
+            return result
+
+        try:
+            response = self.session.get(
+                f"{self.base_url}{endpoint}",
+                headers={"x-apisports-key": self.api_key},
+                params=params,
+                timeout=15,
+            )
+
+            response.raise_for_status()
+
+            payload = response.json()
+
+            if not isinstance(payload, Mapping):
+                result = (
+                    None,
+                    "Unexpected API response format",
+                )
+
+            elif payload.get("errors"):
+                result = (
+                    None,
+                    str(payload["errors"]),
+                )
+
+            else:
+                result = (
+                    payload.get("response", []),
+                    None,
+                )
+
+        except (
+            requests.RequestException,
+            ValueError,
+        ) as error:
+            result = (
+                None,
+                str(error),
+            )
+
+        self._cache[cache_key] = result
+
+        return result
+
+    @staticmethod
+    def _fixture_summary(fixture):
+        """Create a compact fixture representation."""
+
+        if not isinstance(fixture, Mapping):
+            return {
+                "id": None,
+                "date": None,
+                "home": None,
+                "away": None,
+                "home_goals": None,
+                "away_goals": None,
+            }
+
+        details = fixture.get("fixture", {})
+        teams = fixture.get("teams", {})
+        goals = fixture.get("goals", {})
+
+        return {
+            "id": details.get("id"),
+            "date": details.get("date"),
+            "home": teams.get(
+                "home",
+                {},
+            ).get("name"),
+            "away": teams.get(
+                "away",
+                {},
+            ).get("name"),
+            "home_goals": goals.get("home"),
+            "away_goals": goals.get("away"),
+        }
+
+    def _filter_h2h(
+        self,
+        h2h_data,
+        fixture_date,
+    ):
+        """Keep only completed H2H matches before the current fixture."""
+
+        if not h2h_data:
+            return []
+
+        result = []
+
+        seen = set()
+
+        for fixture in h2h_data:
+            summary = self._fixture_summary(fixture)
+
+            match_id = summary.get("id")
+
+            # Avoid duplicate API records.
+            if match_id and match_id in seen:
+                continue
+
+            if match_id:
+                seen.add(match_id)
+
+            match_date = self._parse_date(summary.get("date"))
+
+            # Never include a future H2H.
+            if fixture_date and match_date and match_date >= fixture_date:
+                continue
+
+            # Ignore incomplete/future fixtures.
+            if summary.get("home_goals") is None or summary.get("away_goals") is None:
+                continue
+
+            result.append(summary)
+
+        result.sort(
+            key=lambda item: (
+                self._parse_date(item.get("date"))
+                or datetime.min.replace(tzinfo=timezone.utc)
+            )
+        )
+
+        return result
+
+    @staticmethod
+    def _compact_odds(odds_response):
+        """Extract Match Winner odds from the first available bookmaker."""
+
+        if not odds_response:
+            return None
+
+        if not isinstance(odds_response, list):
+            return None
+
+        for bookmaker in (
+            odds_response[0].get("bookmakers", [])
+            if isinstance(odds_response[0], Mapping)
+            else []
+        ):
+            for market in bookmaker.get("bets", []):
+                if market.get("name") != "Match Winner":
+                    continue
+
+                values = {}
+
+                for item in market.get("values", []):
+                    value = item.get("value")
+                    odd = item.get("odd")
+
+                    if value is None or odd is None:
+                        continue
+
+                    try:
+                        values[str(value)] = float(odd)
+
+                    except (
+                        ValueError,
+                        TypeError,
+                    ):
+                        continue
+
+                if values:
+                    return {
+                        "bookmaker": bookmaker.get("name"),
+                        "market": "Match Winner",
+                        "values": values,
+                    }
+
+        return None
+
+    @staticmethod
+    def _deduplicate_records(records):
+        """Remove duplicate API records."""
+
+        if not records:
+            return []
+
+        result = []
+
+        seen = set()
+
+        for record in records:
+            if not isinstance(record, Mapping):
+                continue
+
+            player = record.get(
+                "player",
+                {},
+            )
+
+            team = record.get(
+                "team",
+                {},
+            )
+
+            fixture = record.get(
+                "fixture",
+                {},
+            )
+
+            key = (
+                player.get("id"),
+                team.get("id"),
+                fixture.get("id"),
+                player.get("name"),
+                player.get("reason"),
+            )
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+
+            result.append(record)
+
+        return result
+
+    def _team_id(self, event, side):
+        """Resolve team ID using event data or API search."""
+
+        team_id = event.get(f"{side}_team_id")
+
+        if team_id:
+            return team_id, None
+
+        team_name = event.get(side)
+
+        if not team_name:
+            return (
+                None,
+                f"{side.capitalize()} team name is missing",
+            )
+
+        teams, error = self._get(
+            "/teams",
+            search=team_name,
+        )
+
+        if error or not teams:
+            return (
+                None,
+                error or f"Team not found: {team_name}",
+            )
+
+        for team in teams:
+            if not isinstance(team, Mapping):
+                continue
+
+            data = team.get(
+                "team",
+                {},
+            )
+
+            name = data.get("name")
+
+            if name and self._normalise_name(name) == self._normalise_name(team_name):
+                return (
+                    data.get("id"),
+                    None,
+                )
+
+        # Fallback to API's first result.
+        first = teams[0]
+
+        if isinstance(first, Mapping):
+            return (
+                first.get(
+                    "team",
+                    {},
+                ).get("id"),
+                None,
+            )
+
+        return (
+            None,
+            f"Team not found: {team_name}",
+        )
+
+    # =========================================================
+    # EVENT COLLECTION
+    # =========================================================
+
+    def _collect_event(self, priority_event):
+        """Collect all available data for one fixture."""
+
+        event = dict(priority_event)
+
+        home = event.get("home")
+        away = event.get("away")
+
+        fixture_date = self._parse_date(event.get("date"))
+
+        if fixture_date is None:
+            fixture_date = datetime.now(timezone.utc)
+
+        # -----------------------------------------------------
+        # LOCAL HISTORY
+        # -----------------------------------------------------
+
+        local_history_available = self._local_history_available(event)
+
+        event["local_history_available"] = local_history_available
+
+        if local_history_available:
+            home_form = self._recent_form(
+                home,
+                fixture_date,
+            )
+
+            away_form = self._recent_form(
+                away,
+                fixture_date,
+            )
+
+            home_home_form = self._home_away_form(
+                home,
+                fixture_date,
+                True,
+            )
+
+            away_away_form = self._home_away_form(
+                away,
+                fixture_date,
+                False,
+            )
+
+            home_schedule = self._schedule_load(
+                home,
+                fixture_date,
+            )
+
+            away_schedule = self._schedule_load(
+                away,
+                fixture_date,
+            )
+
+        else:
+            # We deliberately do not pretend that La Liga teams have
+            # Premier League historical form.
+            home_form = self._empty_recent_form()
+            away_form = self._empty_recent_form()
+
+            home_home_form = self._empty_home_away_form()
+            away_away_form = self._empty_home_away_form()
+
+            home_schedule = {
+                "matches_last_14_days": None,
+                "matches_last_30_days": None,
+                "days_since_last_match": None,
+            }
+
+            away_schedule = {
+                "matches_last_14_days": None,
+                "matches_last_30_days": None,
+                "days_since_last_match": None,
+            }
+
+        # -----------------------------------------------------
+        # TEAM IDs
+        # -----------------------------------------------------
+
+        home_id, home_error = self._team_id(
+            event,
+            "home",
+        )
+
+        away_id, away_error = self._team_id(
+            event,
+            "away",
+        )
+
+        # -----------------------------------------------------
+        # H2H
+        # -----------------------------------------------------
+
+        h2h = None
+        h2h_error = None
+
+        if home_id and away_id:
+            h2h_data, h2h_error = self._get(
+                "/fixtures/headtohead",
+                h2h=f"{home_id}-{away_id}",
+            )
+
+            if h2h_data:
+                h2h = self._filter_h2h(
+                    h2h_data,
+                    fixture_date,
+                )
+
+        # -----------------------------------------------------
+        # CURRENT MATCH DATA
+        # -----------------------------------------------------
+
+        fixture_id = event.get("id")
+
+        injuries = None
+        lineups = None
+        odds = None
+
+        injuries_error = None
+        lineups_error = None
+        odds_error = None
+
+        if fixture_id:
+            injuries, injuries_error = self._get(
+                "/injuries",
+                fixture=fixture_id,
+            )
+
+            lineups, lineups_error = self._get(
+                "/fixtures/lineups",
+                fixture=fixture_id,
+            )
+
+            odds_data, odds_error = self._get(
+                "/odds",
+                fixture=fixture_id,
+            )
+
+            odds = self._compact_odds(odds_data)
+
+            if injuries:
+                injuries = self._deduplicate_records(injuries)
+
+            if lineups:
+                # Keep API response unchanged because downstream
+                # analyst code may expect the native API structure.
+                lineups = list(lineups)
+
+        # -----------------------------------------------------
+        # ERRORS
+        # -----------------------------------------------------
+
+        errors = {}
+
+        if home_error:
+            errors["home_team"] = home_error
+
+        if away_error:
+            errors["away_team"] = away_error
+
+        if h2h_error:
+            errors["h2h"] = h2h_error
+
+        if injuries_error:
+            errors["injuries"] = injuries_error
+
+        if lineups_error:
+            errors["lineups"] = lineups_error
+
+        if odds_error:
+            errors["odds"] = odds_error
+
+        # -----------------------------------------------------
+        # DATA STRUCTURES EXPECTED BY ANALYST
+        # -----------------------------------------------------
+
+        event["recent_form"] = {
+            "home": home_form,
+            "away": away_form,
+        }
+
+        event["home_away_form"] = {
+            "home": home_home_form,
+            "away": away_away_form,
+        }
+        # -----------------------------------------------------
+        # HOME / AWAY SPLIT FEATURES
+        # -----------------------------------------------------
+
+        event["home_home_matches_before"] = home_home_form["matches"]
+
+        event["home_home_points_per_game"] = home_home_form["points_per_game"]
+
+        event["home_home_goals_for"] = home_home_form["goals_for"]
+
+        event["home_home_goals_against"] = home_home_form["goals_against"]
+
+        event["home_home_goal_difference"] = home_home_form["goal_difference"]
+
+        event["home_home_win_rate"] = home_home_form["win_rate"]
+
+        event["away_away_matches_before"] = away_away_form["matches"]
+
+        event["away_away_points_per_game"] = away_away_form["points_per_game"]
+
+        event["away_away_goals_for"] = away_away_form["goals_for"]
+
+        event["away_away_goals_against"] = away_away_form["goals_against"]
+
+        event["away_away_goal_difference"] = away_away_form["goal_difference"]
+
+        event["away_away_win_rate"] = away_away_form["win_rate"]
+        event["schedule_load"] = {
+            "home": home_schedule,
+            "away": away_schedule,
+        }
+
+        event["h2h"] = h2h
+        # -----------------------------------------------------
+        # CURRENT MATCH DATA
+        # -----------------------------------------------------
+
+        event["injuries"] = injuries if injuries else None
+        event["lineups"] = lineups if lineups else None
+        event["odds"] = odds
+
+        event["home_team_id"] = home_id
+        event["away_team_id"] = away_id
+        event["home_team"] = home
+        event["away"] = away
+
+        # -----------------------------------------------------
+        # MODEL FEATURES
+        # -----------------------------------------------------
+
+        # Overall recent form
+        event["home_matches_before"] = home_form["matches"]
+        event["home_recent_points"] = home_form["points"]
+        event["home_recent_points_per_game"] = home_form["points_per_game"]
+        event["home_recent_goal_difference"] = home_form["goal_difference"]
+        event["home_recent_wins"] = home_form["wins"]
+        event["home_recent_draws"] = home_form["draws"]
+        event["home_recent_losses"] = home_form["losses"]
+
+        event["home_win_rate"] = home_form["win_rate"]
+        event["home_draw_rate"] = home_form["draw_rate"]
+        event["home_loss_rate"] = home_form["loss_rate"]
+
+        event["away_matches_before"] = away_form["matches"]
+        event["away_recent_points"] = away_form["points"]
+        event["away_recent_points_per_game"] = away_form["points_per_game"]
+        event["away_recent_goal_difference"] = away_form["goal_difference"]
+        event["away_recent_wins"] = away_form["wins"]
+        event["away_recent_draws"] = away_form["draws"]
+        event["away_recent_losses"] = away_form["losses"]
+
+        event["away_win_rate"] = away_form["win_rate"]
+        event["away_draw_rate"] = away_form["draw_rate"]
+        event["away_loss_rate"] = away_form["loss_rate"]
+
+        # -----------------------------------------------------
+    # MODEL DERIVED FEATURES
+    # -----------------------------------------------------
+
+    h2h_matches = h2h if isinstance(h2h, list) else []
+
+    event["h2h_matches_before"] = len(h2h_matches)
+
+    h2h_points = 0.0
+    h2h_goals_for = 0.0
+    h2h_goals_against = 0.0
+    h2h_home_wins = 0
+
+    for match in h2h_matches:
+        if not isinstance(match, dict):
+            continue
+
+        match_home = match.get("home")
+        match_away = match.get("away")
+        home_goals = match.get("home_goals")
+        away_goals = match.get("away_goals")
+
+        if home_goals is None or away_goals is None:
+            continue
+
+        try:
+            home_goals = float(home_goals)
+            away_goals = float(away_goals)
+        except (TypeError, ValueError):
+            continue
+
+        if match_home == home:
+            h2h_goals_for += home_goals
+            h2h_goals_against += away_goals
+
+            if home_goals > away_goals:
+                h2h_points += 3.0
+                h2h_home_wins += 1
+            elif home_goals == away_goals:
+                h2h_points += 1.0
+
+        elif match_away == home:
+            h2h_goals_for += away_goals
+            h2h_goals_against += home_goals
+
+            if away_goals > home_goals:
+                h2h_points += 3.0
+                h2h_home_wins += 1
+            elif away_goals == home_goals:
+                h2h_points += 1.0
+
+    h2h_count = len(h2h_matches)
+
+    if h2h_count > 0:
+        event["h2h_home_team_points_per_game"] = (
+            h2h_points / h2h_count
+        )
+        event["h2h_home_team_goals_for"] = (
+            h2h_goals_for / h2h_count
+        )
+        event["h2h_home_team_goals_against"] = (
+            h2h_goals_against / h2h_count
+        )
+        event["h2h_home_team_win_rate"] = (
+            h2h_home_wins / h2h_count
+        )
+        event["h2h_history_available"] = 1
+    else:
+        event["h2h_home_team_points_per_game"] = 0.0
+        event["h2h_home_team_goals_for"] = 0.0
+        event["h2h_home_team_goals_against"] = 0.0
+        event["h2h_home_team_win_rate"] = 0.0
+        event["h2h_history_available"] = 0
+
+    event["form_edge"] = (
+        home_form["points_per_game"]
+        - away_form["points_per_game"]
+    )
+
+    event["attack_edge"] = (
+        home_form["goals_for"]
+        - away_form["goals_for"]
+    )
+
+    event["defense_edge"] = (
+        away_form["goals_against"]
+        - home_form["goals_against"]
+    )
+
+    event["goal_difference_edge"] = (
+        home_form["goal_difference"]
+        - away_form["goal_difference"]
+    )
+
+    event["home_away_form_edge"] = (
+        home_home_form["points_per_game"]
+        - away_away_form["points_per_game"]
+    )
+
+    event["home_away_attack_edge"] = (
+        home_home_form["goals_for"]
+        - away_away_form["goals_for"]
+    )
+
+    event["home_away_defense_edge"] = (
+        away_away_form["goals_against"]
+        - home_home_form["goals_against"]
+    )
+
+    event["home_history_available"] = int(
+        home_form["matches"] > 0
+    )
+
+    event["away_history_available"] = int(
+        away_form["matches"] > 0
+    )
+
+    event["home_home_history_available"] = int(
+        home_home_form["matches"] > 0
+    )
+
+    event["away_away_history_available"] = int(
+        away_away_form["matches"] > 0
+    )
+
+    event["history_quality_score"] = (
+        event["home_history_available"]
+        + event["away_history_available"]
+        + event["home_home_history_available"]
+        + event["away_away_history_available"]
+        + event["h2h_history_available"]
+    ) / 5.0
+
+    event["injuries"] = injuries if injuries else None
+    event["lineups"] = lineups if lineups else None
+    event["odds"] = odds
+
+    event["home_team_id"] = home_id
+    event["away_team_id"] = away_id
+    event["home_team"] = home
+    event["away"] = away
+
+    # DATA QUALITY
+    # -----------------------------------------------------
+
+    missing = []
+
+    for field in self.REQUIRED_FIELDS:
+            value = event.get(field)
+
+            if value is None:
+                missing.append(field)
+
+            elif isinstance(value, Mapping):
+                # A mapping is considered missing if all nested values
+                # are empty/None.
+                if not any(
+                    item
+                    not in (
+                        None,
+                        [],
+                        {},
+                    )
+                    for item in value.values()
+                ):
+                    missing.append(field)
+
+            elif isinstance(value, Sequence) and not isinstance(
+                value,
+                (str, bytes),
+            ):
+                if len(value) == 0:
+                    missing.append(field)
+
+            elif not value:
+                missing.append(field)
+
+        event["dataset_complete"] = not missing
+
+        event["dataset_quality"] = round(
+            (len(self.REQUIRED_FIELDS) - len(missing)) / len(self.REQUIRED_FIELDS) * 100
+        )
+
+        event["missing_data"] = missing
+
+        event["collection_errors"] = errors
+
+        return event
+
+    # =========================================================
+    # PUBLIC RUN
+    # =========================================================
+
+    def run(self, research_result):
+        """Run the Data Manager."""
+
+        print("Data Manager started.")
+
+        if not self.api_key:
+            return {
+                "status": "error",
+                "agent": self.name,
+                "message": ("API_FOOTBALL_KEY not found in .env"),
+                "fixtures": [],
+            }
+
+        if isinstance(
+            research_result,
+            Mapping,
+        ):
+            fixtures = research_result.get(
+                "fixtures",
+                [],
+            )
+
+        elif isinstance(
+            research_result,
+            Sequence,
+        ) and not isinstance(
+            research_result,
+            (str, bytes),
+        ):
+            fixtures = list(research_result)
+
+        else:
+            return {
+                "status": "error",
+                "agent": self.name,
+                "message": ("Expected ResearchAgent.run() result or fixtures list"),
+                "fixtures": [],
+            }
+
+        if not isinstance(fixtures, list):
+            fixtures = list(fixtures)
+
+        selected = fixtures[: self.max_fixtures]
+
+        collected = []
+
+        for fixture in selected:
+            if not isinstance(fixture, Mapping):
+                continue
+
+            try:
+                collected.append(self._collect_event(fixture))
+
+            except Exception as error:
+                failed = dict(fixture)
+
+                failed["dataset_complete"] = False
+
+                failed["dataset_quality"] = 0
+
+                failed["missing_data"] = list(self.REQUIRED_FIELDS)
+
+                failed["collection_errors"] = {"collector": str(error)}
+
+                collected.append(failed)
+
+        ready_count = sum(
+            1
+            for event in collected
+            if event.get(
+                "dataset_quality",
+                0,
+            )
+            >= 50
+        )
+
+        return {
+            "status": "success",
+            "agent": self.name,
+            "fixtures_received": len(fixtures),
+            "fixtures_processed": len(selected),
+            "fixtures_skipped": (len(fixtures) - len(selected)),
+            "historical_fixtures": len(self.history),
+            "fixtures_with_basic_model_data": ready_count,
+            "fixtures": collected,
+        }
+
+
+if __name__ == "__main__":
+    manager = DataManager()
+
+    print(
+        "\nHistorical fixtures:",
+        len(manager.history),
+    )
