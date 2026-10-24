@@ -1,6 +1,8 @@
 from agents.risk_manager import RiskManager
 from agents.cfo_agent import CFOAgent
 from agents.auditor_agent import AuditorAgent
+from agents.investment_committee import InvestmentCommittee
+import sys
 
 
 def make_candidate():
@@ -33,6 +35,8 @@ def show(title, data):
         "financial_status",
         "audit_status",
         "recommendation",
+        "decision",
+        "reason",
         "message",
     ):
         if key in data:
@@ -114,6 +118,19 @@ def main():
     show("AUDITOR", audit_output)
 
     # ==========================================================
+    # INVESTMENT COMMITTEE
+    # ==========================================================
+
+    committee = InvestmentCommittee()
+    committee_output = committee.run({
+        "risk": risk_output,
+        "financial_review": cfo_output,
+        "audit": audit_output,
+    })
+
+    show("INVESTMENT COMMITTEE", committee_output)
+
+    # ==========================================================
     # FINAL
     # ==========================================================
 
@@ -122,21 +139,27 @@ def main():
     print("FINAL PIPELINE RESULT")
     print("=" * 60)
 
-    print("Analyst:", analyst_output["status"])
-    print("Risk:", risk_output["stake_decision"])
-    print("CFO:", cfo_output["financial_status"])
-    print("Auditor:", audit_output["audit_status"])
-    print("Recommendation:", audit_output["recommendation"])
+    print("Analyst:", analyst_output.get("status", "MISSING"))
+    print("Risk:", risk_output.get("stake_decision", "MISSING"))
+    print("CFO:", cfo_output.get("financial_status", "MISSING"))
+    print("Auditor:", audit_output.get("audit_status", "MISSING"))
+    print("Recommendation:", audit_output.get("recommendation", "MISSING"))
+    print("Committee:", committee_output.get("decision", "MISSING"))
+    print("Committee reason:", committee_output.get("reason", "MISSING"))
 
     print()
 
-    if audit_output["audit_status"] == "FAIL":
-        print("PIPELINE TEST: FAIL")
-    elif audit_output["audit_status"] == "PASS WITH WARNINGS":
-        print("PIPELINE TEST: PASS WITH WARNINGS")
-    else:
+    audit_status = audit_output.get("audit_status")
+    if audit_status == "PASS" and committee_output.get("decision") == "APPROVE":
         print("PIPELINE TEST: PASS")
+        return 0
+    if audit_status == "PASS WITH WARNINGS":
+        print("PIPELINE TEST: PASS WITH WARNINGS")
+        return 1
+
+    print("PIPELINE TEST: FAIL")
+    return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

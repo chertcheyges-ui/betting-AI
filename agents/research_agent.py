@@ -1,4 +1,4 @@
-[16.09.26 21:28] Даниил: import logging
+import logging
 import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-logger = logging.getLogger(name)
+logger = logging.getLogger(__name__)
 
 API_URL = "https://v3.football.api-sports.io/fixtures"
 
@@ -53,7 +53,7 @@ FIELDS_TO_COLLECT = (
 class ResearchAgent:
     """Find and rank priority football fixtures for the data pipeline."""
 
-    def init(self, timezone=DEFAULT_TIMEZONE):
+    def __init__(self, timezone=DEFAULT_TIMEZONE):
         self.name = "Research Agent"
         self.api_key = os.getenv("API_FOOTBALL_KEY")
         self.timezone = timezone
@@ -115,7 +115,7 @@ class ResearchAgent:
 
         results = []
         skipped = {"status": 0, "excluded": 0, "low_priority": 0, "no_id": 0}
-[16.09.26 21:28] Даниил: for fixture in payload.get("response", []):
+        for fixture in payload.get("response", []):
             fixture_data = fixture.get("fixture", {})
             league = fixture.get("league", {})
             teams = fixture.get("teams", {})

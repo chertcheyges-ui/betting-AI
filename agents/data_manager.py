@@ -50,6 +50,7 @@ class DataManager:
         self.base_url = "https://v3.football.api-sports.io"
 
         self._cache = {}
+        self.api_rate_limited = False
 
         self.history = []
 
@@ -571,6 +572,11 @@ class DataManager:
         if cache_key in self._cache:
             return self._cache[cache_key]
 
+        if self.api_rate_limited:
+            result = (None, "API-Football rate limit reached; request skipped.")
+            self._cache[cache_key] = result
+            return result
+
         if not self.api_key:
             result = (
                 None,
@@ -588,6 +594,15 @@ class DataManager:
                 params=params,
                 timeout=15,
             )
+
+            if response.status_code == 429:
+                self.api_rate_limited = True
+                result = (
+                    None,
+                    "API-Football rate limit reached (HTTP 429).",
+                )
+                self._cache[cache_key] = result
+                return result
 
             response.raise_for_status()
 
@@ -714,39 +729,42 @@ class DataManager:
         if not isinstance(odds_response, list):
             return None
 
-        for bookmaker in (
-            odds_response[0].get("bookmakers", [])
-            if isinstance(odds_response[0], Mapping)
-            else []
-        ):
-            for market in bookmaker.get("bets", []):
-                if market.get("name") != "Match Winner":
+        for odds_record in odds_response:
+            if not isinstance(odds_record, Mapping):
+                continue
+
+            for bookmaker in odds_record.get("bookmakers", []):
+                if not isinstance(bookmaker, Mapping):
                     continue
 
-                values = {}
-
-                for item in market.get("values", []):
-                    value = item.get("value")
-                    odd = item.get("odd")
-
-                    if value is None or odd is None:
+                for market in bookmaker.get("bets", []):
+                    if market.get("name") != "Match Winner":
                         continue
 
-                    try:
-                        values[str(value)] = float(odd)
+                    values = {}
 
-                    except (
-                        ValueError,
-                        TypeError,
-                    ):
-                        continue
+                    for item in market.get("values", []):
+                        if not isinstance(item, Mapping):
+                            continue
 
-                if values:
-                    return {
-                        "bookmaker": bookmaker.get("name"),
-                        "market": "Match Winner",
-                        "values": values,
-                    }
+                        value = item.get("value")
+                        odd = item.get("odd")
+
+                        if value is None or odd is None:
+                            continue
+
+                        try:
+                            values[str(value)] = float(odd)
+
+                        except (ValueError, TypeError):
+                            continue
+
+                    if values:
+                        return {
+                            "bookmaker": bookmaker.get("name"),
+                            "market": "Match Winner",
+                            "values": values,
+                        }
 
         return None
 
@@ -1091,6 +1109,7 @@ class DataManager:
         event["home_team_id"] = home_id
         event["away_team_id"] = away_id
         event["home_team"] = home
+        event["away_team"] = away
         event["away"] = away
 
         # -----------------------------------------------------
@@ -1123,195 +1142,195 @@ class DataManager:
         event["away_loss_rate"] = away_form["loss_rate"]
 
         # -----------------------------------------------------
-    # -----------------------------------------------------
-    # MODEL DERIVED FEATURES
-    # -----------------------------------------------------
+        # -----------------------------------------------------
+        # MODEL DERIVED FEATURES
+        # -----------------------------------------------------
 
-    h2h_matches = h2h if isinstance(h2h, list) else []
+        h2h_matches = h2h if isinstance(h2h, list) else []
 
-    event["h2h_matches_before"] = len(h2h_matches)
+        event["h2h_matches_before"] = len(h2h_matches)
 
-    h2h_points = 0.0
-    h2h_goals_for = 0.0
-    h2h_goals_against = 0.0
-    h2h_home_wins = 0
+        h2h_points = 0.0
+        h2h_goals_for = 0.0
+        h2h_goals_against = 0.0
+        h2h_home_wins = 0
 
-    for match in h2h_matches:
-        if not isinstance(match, dict):
-            continue
+        for match in h2h_matches:
+            if not isinstance(match, dict):
+                continue
 
-        match_home = match.get("home")
-        match_away = match.get("away")
-        home_goals = match.get("home_goals")
-        away_goals = match.get("away_goals")
+            match_home = match.get("home")
+            match_away = match.get("away")
+            home_goals = match.get("home_goals")
+            away_goals = match.get("away_goals")
 
-        if home_goals is None or away_goals is None:
-            continue
+            if home_goals is None or away_goals is None:
+                continue
 
-        try:
-            home_goals = float(home_goals)
-            away_goals = float(away_goals)
-        except (TypeError, ValueError):
-            continue
+            try:
+                home_goals = float(home_goals)
+                away_goals = float(away_goals)
+            except (TypeError, ValueError):
+                continue
 
-        if match_home == home:
-            h2h_goals_for += home_goals
-            h2h_goals_against += away_goals
+            if match_home == home:
+                h2h_goals_for += home_goals
+                h2h_goals_against += away_goals
 
-            if home_goals > away_goals:
-                h2h_points += 3.0
-                h2h_home_wins += 1
-            elif home_goals == away_goals:
-                h2h_points += 1.0
+                if home_goals > away_goals:
+                    h2h_points += 3.0
+                    h2h_home_wins += 1
+                elif home_goals == away_goals:
+                    h2h_points += 1.0
 
-        elif match_away == home:
-            h2h_goals_for += away_goals
-            h2h_goals_against += home_goals
+            elif match_away == home:
+                h2h_goals_for += away_goals
+                h2h_goals_against += home_goals
 
-            if away_goals > home_goals:
-                h2h_points += 3.0
-                h2h_home_wins += 1
-            elif away_goals == home_goals:
-                h2h_points += 1.0
+                if away_goals > home_goals:
+                    h2h_points += 3.0
+                    h2h_home_wins += 1
+                elif away_goals == home_goals:
+                    h2h_points += 1.0
 
-    h2h_count = len(h2h_matches)
+        h2h_count = len(h2h_matches)
 
-    if h2h_count > 0:
-        event["h2h_home_team_points_per_game"] = (
-            h2h_points / h2h_count
+        if h2h_count > 0:
+            event["h2h_home_team_points_per_game"] = (
+                h2h_points / h2h_count
+            )
+            event["h2h_home_team_goals_for"] = (
+                h2h_goals_for / h2h_count
+            )
+            event["h2h_home_team_goals_against"] = (
+                h2h_goals_against / h2h_count
+            )
+            event["h2h_home_team_win_rate"] = (
+                h2h_home_wins / h2h_count
+            )
+            event["h2h_history_available"] = 1
+        else:
+            event["h2h_home_team_points_per_game"] = 0.0
+            event["h2h_home_team_goals_for"] = 0.0
+            event["h2h_home_team_goals_against"] = 0.0
+            event["h2h_home_team_win_rate"] = 0.0
+            event["h2h_history_available"] = 0
+
+        event["form_edge"] = (
+            home_form["points_per_game"]
+            - away_form["points_per_game"]
         )
-        event["h2h_home_team_goals_for"] = (
-            h2h_goals_for / h2h_count
+
+        event["attack_edge"] = (
+            home_form["goals_for"]
+            - away_form["goals_for"]
         )
-        event["h2h_home_team_goals_against"] = (
-            h2h_goals_against / h2h_count
+
+        event["defense_edge"] = (
+            away_form["goals_against"]
+            - home_form["goals_against"]
         )
-        event["h2h_home_team_win_rate"] = (
-            h2h_home_wins / h2h_count
+
+        event["goal_difference_edge"] = (
+            home_form["goal_difference"]
+            - away_form["goal_difference"]
         )
-        event["h2h_history_available"] = 1
-    else:
-        event["h2h_home_team_points_per_game"] = 0.0
-        event["h2h_home_team_goals_for"] = 0.0
-        event["h2h_home_team_goals_against"] = 0.0
-        event["h2h_home_team_win_rate"] = 0.0
-        event["h2h_history_available"] = 0
 
-    event["form_edge"] = (
-        home_form["points_per_game"]
-        - away_form["points_per_game"]
-    )
+        event["home_away_form_edge"] = (
+            home_home_form["points_per_game"]
+            - away_away_form["points_per_game"]
+        )
 
-    event["attack_edge"] = (
-        home_form["goals_for"]
-        - away_form["goals_for"]
-    )
+        event["home_away_attack_edge"] = (
+            home_home_form["goals_for"]
+            - away_away_form["goals_for"]
+        )
 
-    event["defense_edge"] = (
-        away_form["goals_against"]
-        - home_form["goals_against"]
-    )
+        event["home_away_defense_edge"] = (
+            away_away_form["goals_against"]
+            - home_home_form["goals_against"]
+        )
 
-    event["goal_difference_edge"] = (
-        home_form["goal_difference"]
-        - away_form["goal_difference"]
-    )
+        event["home_history_available"] = int(
+            home_form["matches"] > 0
+        )
 
-    event["home_away_form_edge"] = (
-        home_home_form["points_per_game"]
-        - away_away_form["points_per_game"]
-    )
+        event["away_history_available"] = int(
+            away_form["matches"] > 0
+        )
 
-    event["home_away_attack_edge"] = (
-        home_home_form["goals_for"]
-        - away_away_form["goals_for"]
-    )
+        event["home_home_history_available"] = int(
+            home_home_form["matches"] > 0
+        )
 
-    event["home_away_defense_edge"] = (
-        away_away_form["goals_against"]
-        - home_home_form["goals_against"]
-    )
+        event["away_away_history_available"] = int(
+            away_away_form["matches"] > 0
+        )
 
-    event["home_history_available"] = int(
-        home_form["matches"] > 0
-    )
+        event["history_quality_score"] = (
+            event["home_history_available"]
+            + event["away_history_available"]
+            + event["home_home_history_available"]
+            + event["away_away_history_available"]
+            + event["h2h_history_available"]
+        ) / 5.0
 
-    event["away_history_available"] = int(
-        away_form["matches"] > 0
-    )
+        event["injuries"] = injuries if injuries else None
+        event["lineups"] = lineups if lineups else None
+        event["odds"] = odds
 
-    event["home_home_history_available"] = int(
-        home_home_form["matches"] > 0
-    )
+        event["home_team_id"] = home_id
+        event["away_team_id"] = away_id
+        event["home_team"] = home
+        event["away"] = away
 
-    event["away_away_history_available"] = int(
-        away_away_form["matches"] > 0
-    )
+        # -----------------------------------------------------
+        # DATA QUALITY
+        # -----------------------------------------------------
 
-    event["history_quality_score"] = (
-        event["home_history_available"]
-        + event["away_history_available"]
-        + event["home_home_history_available"]
-        + event["away_away_history_available"]
-        + event["h2h_history_available"]
-    ) / 5.0
+        missing = []
 
-    event["injuries"] = injuries if injuries else None
-    event["lineups"] = lineups if lineups else None
-    event["odds"] = odds
+        for field in self.REQUIRED_FIELDS:
+            value = event.get(field)
 
-    event["home_team_id"] = home_id
-    event["away_team_id"] = away_id
-    event["home_team"] = home
-    event["away"] = away
+            if value is None:
+                missing.append(field)
 
-    # -----------------------------------------------------
-    # DATA QUALITY
-    # -----------------------------------------------------
+            elif isinstance(value, Mapping):
+                # A mapping is considered missing if all nested values
+                # are empty/None.
+                if not any(
+                    item
+                    not in (
+                        None,
+                        [],
+                        {},
+                    )
+                    for item in value.values()
+                ):
+                    missing.append(field)
 
-    missing = []
-
-    for field in self.REQUIRED_FIELDS:
-        value = event.get(field)
-
-        if value is None:
-            missing.append(field)
-
-        elif isinstance(value, Mapping):
-            # A mapping is considered missing if all nested values
-            # are empty/None.
-            if not any(
-                item
-                not in (
-                    None,
-                    [],
-                    {},
-                )
-                for item in value.values()
+            elif isinstance(value, Sequence) and not isinstance(
+                value,
+                (str, bytes),
             ):
+                if len(value) == 0:
+                    missing.append(field)
+
+            elif not value:
                 missing.append(field)
 
-        elif isinstance(value, Sequence) and not isinstance(
-            value,
-            (str, bytes),
-        ):
-            if len(value) == 0:
-                missing.append(field)
+        event["dataset_complete"] = not missing
 
-        elif not value:
-            missing.append(field)
+        event["dataset_quality"] = round(
+            (len(self.REQUIRED_FIELDS) - len(missing)) / len(self.REQUIRED_FIELDS) * 100
+        )
 
-    event["dataset_complete"] = not missing
+        event["missing_data"] = missing
 
-    event["dataset_quality"] = round(
-        (len(self.REQUIRED_FIELDS) - len(missing)) / len(self.REQUIRED_FIELDS) * 100
-    )
+        event["collection_errors"] = errors
 
-    event["missing_data"] = missing
-
-    event["collection_errors"] = errors
-
-    return event
+        return event
 
     # =========================================================
     # PUBLIC RUN
@@ -1394,7 +1413,7 @@ class DataManager:
         )
 
         return {
-            "status": "success",
+            "status": "degraded" if self.api_rate_limited else "success",
             "agent": self.name,
             "fixtures_received": len(fixtures),
             "fixtures_processed": len(selected),
@@ -1402,6 +1421,12 @@ class DataManager:
             "historical_fixtures": len(self.history),
             "fixtures_with_basic_model_data": ready_count,
             "fixtures": collected,
+            "api_rate_limited": self.api_rate_limited,
+            "message": (
+                "API-Football rate limit reached; some fixture data is unavailable."
+                if self.api_rate_limited
+                else "Fixture data collection completed."
+            ),
         }
 
 

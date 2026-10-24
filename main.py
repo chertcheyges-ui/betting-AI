@@ -14,8 +14,10 @@ def print_summary(research, data, analysis, risk, financial, audit, decision):
     print(
         "Data: "
         f"{data.get('fixtures_processed', 0)}/{data.get('fixtures_received', 0)} "
-        f"processed | {data.get('plan', 'unknown plan')}"
+        f"processed | status: {data.get('status', 'unknown')}"
     )
+    if data.get("api_rate_limited"):
+        print("Data warning: API-Football rate limit reached; incomplete data was blocked.")
 
     for event in data.get("fixtures", []):
         print(
@@ -52,6 +54,7 @@ def main():
     financial_review = CFOAgent().run(risk)
     audit = AuditorAgent().run({
         "research": research_data,
+        "data": prepared_data,
         "analysis": analysis,
         "risk": risk,
         "financial_review": financial_review,

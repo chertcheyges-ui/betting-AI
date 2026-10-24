@@ -39,6 +39,10 @@ class AuditorAgent:
             system_data.get("research")
         )
 
+        data = self._as_dict(
+            system_data.get("data")
+        )
+
         analysis = self._as_dict(
             system_data.get("analysis")
         )
@@ -67,6 +71,17 @@ class AuditorAgent:
             warnings.append(
                 "Research Agent returned no priority fixtures."
             )
+
+        # ==========================================================
+        # DATA COLLECTION CHECK
+        # ==========================================================
+
+        if data.get("api_rate_limited"):
+            warnings.append(
+                "API-Football rate limit prevented complete data collection."
+            )
+        elif data and data.get("status") != "success":
+            errors.append("Data Manager did not complete successfully.")
 
         # ==========================================================
         # ANALYST CHECK
@@ -100,7 +115,29 @@ class AuditorAgent:
                     "ready for a betting decision."
                 )
 
-                if risk.get("stake_decision") != "NO BET":
+                risk_results = risk.get("results")
+                if isinstance(risk_results, list):
+                    blocked_events = {
+                        assessment.get("event", "Unknown event")
+                        for assessment in risk_results
+                        if isinstance(assessment, dict)
+                        and assessment.get("stake_decision") == "NO BET"
+                    }
+                    incomplete_events = {
+                        item.get("event", "Unknown event")
+                        for item in not_ready
+                    }
+                    incomplete_data_blocked = incomplete_events.issubset(
+                        blocked_events
+                    )
+                else:
+                    # Backward-compatible fallback for older Risk Manager
+                    # payloads that do not include per-event assessments.
+                    incomplete_data_blocked = (
+                        risk.get("stake_decision") == "NO BET"
+                    )
+
+                if not incomplete_data_blocked:
                     errors.append(
                         "Risk Manager did not block an incomplete "
                         "analyst dataset."
@@ -150,6 +187,9 @@ class AuditorAgent:
             "financial_status"
         )
 
+        if financial.get("status") not in ("success", None):
+            errors.append("CFO Agent did not complete successfully.")
+
         # CFO must never approve something Risk Manager rejected.
         if not candidates and approved:
             errors.append(
@@ -180,6 +220,11 @@ class AuditorAgent:
             warnings.append(
                 "CFO blocked candidates because financial "
                 "limits are unavailable."
+            )
+
+        if candidates and financial_status == "REVIEW COMPLETE" and not approved:
+            errors.append(
+                "CFO completed review without setting a position limit."
             )
 
         # ==========================================================
@@ -218,7 +263,18 @@ class AuditorAgent:
 
         elif warnings:
             audit_status = "PASS WITH WARNINGS"
-            recommendation = "HOLD"
+            # A candidate that passed Risk Manager and received a CFO
+            # position limit remains safe to send to the committee. Warnings
+            # about other, blocked candidates must not veto that position.
+            if (
+                candidates
+                and approved
+                and financial_status == "REVIEW COMPLETE"
+                and not data.get("api_rate_limited")
+            ):
+                recommendation = "READY FOR INVESTMENT COMMITTEE"
+            else:
+                recommendation = "HOLD"
 
         else:
             audit_status = "PASS"
