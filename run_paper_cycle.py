@@ -8,8 +8,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 
 
-def run(script):
-    result = subprocess.run([sys.executable, str(ROOT / script)], cwd=ROOT)
+def run(script, *args):
+    result = subprocess.run([sys.executable, str(ROOT / script), *args], cwd=ROOT)
     return result.returncode
 
 
@@ -23,6 +23,7 @@ if __name__ == "__main__":
     # source can provide a real schedule again.
     if history != 0:
         print("Системный статус не обновлён: сохранён последний полный отчёт до восстановления источника.")
+        run("export_basketball_snapshot.py", "--forecasts-only")
         raise SystemExit(history)
     # The status exporter records forecasts before the next matches finish.
     status = run("export_system_status.py")
