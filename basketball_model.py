@@ -128,7 +128,9 @@ def form(games):
 
 def build(matches):
     load_dotenv(ROOT / ".env")
-    day = datetime.now(ZoneInfo("Europe/Minsk")).date().isoformat()
+    minsk = ZoneInfo("Europe/Minsk")
+    now = datetime.now(minsk)
+    day = now.date().isoformat()
     key = os.getenv("BALLDONTLIE_API_KEY")
     odds_key = os.getenv("ODDS_API_KEY")
     payload = {"schema_version": 1, "sport": "basketball", "generated_at": datetime.now(ZoneInfo("UTC")).isoformat(), "status": "unavailable", "recommendations": []}
@@ -140,6 +142,12 @@ def build(matches):
         current_odds = bookmaker_odds(odds_key)
         for match in matches:
             if match.get("source") != "BALLDONTLIE" or match.get("status") not in {"NS", "SCHEDULED"}:
+                continue
+            try:
+                start = datetime.fromisoformat(f"{match['date']}T{match['time']}").replace(tzinfo=minsk)
+            except (KeyError, ValueError):
+                continue
+            if start <= now:
                 continue
             home, away = table.get(match["home"], {}), table.get(match["away"], {})
             if min(home.get("games", 0), away.get("games", 0)) < 3:

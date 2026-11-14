@@ -85,9 +85,11 @@ def load_nba(day, key):
     if not key:
         return []
     local_day = datetime.fromisoformat(day).date()
+    tomorrow = (local_day + timedelta(days=1)).isoformat()
+    provider_dates = [(local_day + timedelta(days=offset)).isoformat() for offset in (-1, 0, 1)]
     response = requests.get(
         BALLDONTLIE_SOURCE,
-        params=[("dates[]", (local_day - timedelta(days=1)).isoformat()), ("dates[]", day), ("per_page", 100)],
+        params=[("dates[]", value) for value in provider_dates] + [("per_page", 100)],
         headers={"Authorization": key},
         timeout=20,
     )
@@ -97,7 +99,9 @@ def load_nba(day, key):
     for item in payload.get("data", []):
         if isinstance(item, dict):
             match = basketball_game(item)
-            if match and match["date"] == day:
+            if match and (match["date"] == day or (
+                match["date"] == tomorrow and match["status"] in {"NS", "SCHEDULED"}
+            )):
                 result.append(match)
     return result
 
@@ -159,6 +163,7 @@ def attach_bookmaker_odds(matches, key):
 def main(*, record_new=True):
     load_dotenv(ROOT / ".env")
     day = datetime.now(ZoneInfo("Europe/Minsk")).date().isoformat()
+    tomorrow = (datetime.fromisoformat(day) + timedelta(days=1)).date().isoformat()
     payload = {
         "schema_version": 1,
         "sport": "basketball",
@@ -201,11 +206,12 @@ def main(*, record_new=True):
         attach_bookmaker_odds(matches, os.getenv("ODDS_API_KEY"))
     except (requests.RequestException, ValueError):
         payload["collection_status"] = "degraded" if matches else "error"
-    payload["matches"] = matches
+    payload["matches"] = [match for match in matches if match["date"] != tomorrow]
+    payload["upcoming_matches"] = [match for match in matches if match["date"] == tomorrow]
     save(payload)
     save_history(payload["matches"])
     from basketball_model import build as build_model
-    analysis = build_model(payload["matches"])
+    analysis = build_model(matches)
     from basketball_paper_trading import publish as publish_paper, update as update_paper
     if record_new:
         update_paper(payload, analysis)
@@ -213,8 +219,14 @@ def main(*, record_new=True):
         publish_paper()
     from export_shared_finance import main as update_shared_finance
     update_shared_finance()
-    print("Баскетбол:", len(payload["matches"]), "матчей за", day)
+    print("Баскетбол:", len(payload["matches"]), "матчей за", day,
+          "и", len(payload["upcoming_matches"]), "предстоящих матчей за", tomorrow)
 
 
 if __name__ == "__main__":
-    main()
+    from argparse import ArgumentParser
+
+    parser = ArgumentParser()
+    parser.add_argument("--forecasts-only", action="store_true",
+                        help="Refresh forecasts and results without opening new virtual bets.")
+    main(record_new=not parser.parse_args().forecasts_only)
