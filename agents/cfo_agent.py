@@ -54,18 +54,6 @@ class CFOAgent:
                 "approved_candidates": [],
             }
 
-        candidates = risk_data.get("candidates_for_cfo", [])
-        if not candidates:
-            return {
-                "status": "success",
-                "agent": self.name,
-                "risk_data_received": risk_data,
-                "bank_status": "NO ACTION",
-                "financial_status": "NO ACTION",
-                "approved_candidates": [],
-                "message": "No candidates passed Risk Manager review.",
-            }
-
         missing_config = self._configuration_missing()
         if missing_config:
             return {
@@ -77,6 +65,24 @@ class CFOAgent:
                 "missing_configuration": missing_config,
                 "approved_candidates": [],
                 "message": "Financial limits must be configured before approval.",
+            }
+
+        candidates = risk_data.get("candidates_for_cfo", [])
+        if not candidates:
+            daily_limit = self.bankroll * self.daily_risk_limit_percent / 100
+            exposure = self._positive_number(current_exposure) or 0.0
+            return {
+                "status": "success",
+                "agent": self.name,
+                "risk_data_received": risk_data,
+                "bank_status": "WITHIN LIMITS",
+                "financial_status": "NO ACTION",
+                "bankroll": self.bankroll,
+                "daily_risk_limit": round(daily_limit, 2),
+                "current_exposure": exposure,
+                "remaining_daily_risk": round(max(0.0, daily_limit - exposure), 2),
+                "approved_candidates": [],
+                "message": "No candidates passed Risk Manager review.",
             }
 
         exposure = self._positive_number(current_exposure) or 0.0

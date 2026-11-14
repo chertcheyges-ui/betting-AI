@@ -3,6 +3,8 @@ from agents.cfo_agent import CFOAgent
 from agents.auditor_agent import AuditorAgent
 from agents.investment_committee import InvestmentCommittee
 import sys
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 
 def make_candidate():
@@ -111,6 +113,11 @@ def main():
         "analysis": analyst_output,
         "risk": risk_output,
         "financial_review": cfo_output,
+        "dashboard_report": {
+            "requested_date": datetime.now(ZoneInfo("Europe/Minsk")).date().isoformat(),
+            "collection_status": "success",
+            "matches": [{"home": "Test Home", "away": "Test Away"}],
+        },
     }
 
     audit_output = auditor.run(system_data)

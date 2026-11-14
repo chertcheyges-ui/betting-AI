@@ -11,6 +11,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 import requests
 from dotenv import load_dotenv
+from agents.external_news_checker import ExternalNewsChecker
 
 
 load_dotenv()
@@ -51,6 +52,7 @@ class DataManager:
 
         self._cache = {}
         self.api_rate_limited = False
+        self.external_news = ExternalNewsChecker()
 
         self.history = []
 
@@ -1328,7 +1330,16 @@ class DataManager:
 
         event["missing_data"] = missing
 
+        # When the primary sources leave a gap, look for recent public match
+        # information.  Headlines are never copied into the model as facts:
+        # they either help a person review the match or keep it out of a bet.
+        external_news = self.external_news.check(home, away, missing)
+
         event["collection_errors"] = errors
+        event["external_source_status"] = external_news.get("status")
+        event["external_search_for"] = external_news.get("searched_for", [])
+        event["external_signals"] = external_news.get("signals", [])
+        event["external_review_required"] = bool(external_news.get("review_required"))
 
         return event
 

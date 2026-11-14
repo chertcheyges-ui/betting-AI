@@ -1,0 +1,10 @@
+{
+  "name": "betting-ai-dashboard",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-live-worker.mjs",
+    "validate": "node scripts/validate-live-worker.mjs"
+  }
+}

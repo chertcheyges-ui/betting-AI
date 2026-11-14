@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Betting AI · Решения</title>
+  <link rel="stylesheet" href="app.css">
+  <link rel="stylesheet" href="shell.css">
+  <link rel="stylesheet" href="finance.css">
+  <script src="decisions.js" defer></script><script src="nav.js" defer></script>
+</head>
+<body>
+  <header><a class="brand" href="index.html">◉ Betting AI</a><nav class="section-nav" aria-label="Разделы"><details class="nav-group"><summary>Главное</summary><div class="nav-links"><a href="index.html">Статус</a><a href="index.html#matches">Матчи</a><a href="live.html">Live</a></div></details><details class="nav-group" open><summary>Прогнозы</summary><div class="nav-links"><a href="decisions.html" aria-current="page">Решения</a><a href="insights.html">Почему прогноз</a></div></details><details class="nav-group"><summary>Результаты</summary><div class="nav-links"><a href="history.html">История</a><a href="paper.html">Проверка</a></div></details><details class="nav-group"><summary>Управление</summary><div class="nav-links"><a href="finance.html">Финансы</a><a href="audit.html">Отчёт аудитора</a><a href="study.html">Учебная лаборатория</a></div></details></nav></header>
+  <main>
+    <section class="intro"><div><p class="eyebrow">ВИРТУАЛЬНЫЕ ДЕНЬГИ</p><h1>Поставил.<br><span>Или наблюдаю.</span></h1><p class="lead">Здесь нет настоящих ставок и настоящих денег.</p></div></section>
+    <section class="summary"><article><span class="muted">Поставил виртуально</span><strong id="approved-count">—</strong></article><article><span class="muted">Наблюдаю</span><strong id="watch-count">—</strong></article><article><span class="muted">Не ставлю</span><strong id="skip-count">—</strong></article></section>
+    <section><h2>Поставил виртуально</h2><div id="approved" class="ledger-list"></div></section>
+    <section><h2>Не стал ставить</h2><div id="watch" class="ledger-list"></div></section>
+    <section><h2>Не ставлю</h2><div id="skip" class="ledger-list"></div></section>
+  </main>
+</body>
+</html>

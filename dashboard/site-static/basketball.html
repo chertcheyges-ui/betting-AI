@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Betting AI · Баскетбол</title>
+  <link rel="stylesheet" href="basketball.css"><script src="basketball-shell.js" defer></script><script src="approved-bets.js" defer></script><script src="basketball-forecast.js" defer></script><script src="basketball.js" defer></script>
+</head>
+<body>
+  <header><a class="brand" href="index.html">◉ Betting AI</a><nav data-basketball-nav></nav></header>
+  <main>
+    <section class="hero"><p>БАСКЕТБОЛ · ОТДЕЛЬНЫЙ РАЗДЕЛ</p><h1>Матчи и<br><span>прогнозы.</span></h1><div class="hero-note"><strong>Футбол не изменён</strong><small>Отдельные матчи, история и виртуальный банк</small></div></section>
+    <section class="summary"><article><span>Матчей сегодня</span><strong id="total">—</strong></article><article><span>Лиг в списке</span><strong id="leagues">—</strong></article><article><span>Статус данных</span><strong id="state">Загрузка</strong></article></section>
+    <section class="notice"><h2>Решение комитета</h2><div id="approved-bets" aria-live="polite">Загружаем виртуальные ставки…</div></section>
+    <section class="section-heading"><div><p>МАТЧИ</p><h2>Баскетбол сегодня</h2></div><button id="refresh">↻ Обновить</button></section>
+    <p id="updated" class="muted">Загружаю данные…</p><section id="matches" class="grid"></section>
+    <section class="notice"><strong>Разделы баскетбола</strong><p>Сегодняшние матчи распределены по статусу: «В обработке», «Ждут результата» и «Готовые». История и аудитор — отдельные вкладки выше. Финансы одни общие с футболом.</p></section>
+  </main>
+</body>
+</html>

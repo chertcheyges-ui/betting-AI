@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import requests
@@ -34,6 +34,7 @@ LEAGUE_PRIORITIES = {
 }
 DEFAULT_PRIORITY = 30
 MIN_PRIORITY = 50
+DEFAULT_LOOKAHEAD_DAYS = 3
 
 # Берём только матчи, которые ещё не начались.
 ALLOWED_STATUSES = {"NS"}  # NS = Not Started
@@ -96,8 +97,8 @@ class ResearchAgent:
             leagues[league.get("id")] = (league.get("name"), league.get("country"))
         return leagues
 
-    def run(self, target_date=None):
-        """Return not-started priority matches for target_date (today by default)."""
+    def run_for_date(self, target_date=None):
+        """Return not-started priority matches for one date."""
         logger.info("Research Agent started.")
 
         if not self.api_key:
@@ -174,4 +175,57 @@ class ResearchAgent:
             "fixtures_found": len(results),
             "skipped": skipped,
             "fixtures": results,
+        }
+
+    def run(self, target_date=None, lookahead_days=None):
+        """Return priority fixtures for one date or an upcoming date range.
+
+        Passing an explicit date preserves the one-day behaviour useful for
+        diagnostics. Normal runs scan today plus a short upcoming horizon.
+        """
+        if target_date is not None:
+            return self.run_for_date(target_date)
+
+        start_date = datetime.now(ZoneInfo(self.timezone)).date()
+        if lookahead_days is None:
+            lookahead_days = os.getenv(
+                "FIXTURE_LOOKAHEAD_DAYS", DEFAULT_LOOKAHEAD_DAYS
+            )
+        try:
+            lookahead_days = max(0, min(int(lookahead_days), 7))
+        except (TypeError, ValueError):
+            lookahead_days = DEFAULT_LOOKAHEAD_DAYS
+
+        dates_checked = [
+            (start_date + timedelta(days=offset)).isoformat()
+            for offset in range(lookahead_days + 1)
+        ]
+        fixtures = []
+        skipped = {"status": 0, "excluded": 0, "low_priority": 0, "no_id": 0}
+        request_errors = {}
+
+        for requested_date in dates_checked:
+            result = self.run_for_date(requested_date)
+            if result.get("status") != "success":
+                request_errors[requested_date] = result.get("message", "Unknown error")
+                continue
+            fixtures.extend(result.get("fixtures", []))
+            for name in skipped:
+                skipped[name] += result.get("skipped", {}).get(name, 0)
+
+        if not fixtures and len(request_errors) == len(dates_checked):
+            return self._error("; ".join(request_errors.values()))
+
+        fixtures.sort(key=lambda item: (-item["research_priority"], item["timestamp"] or 0))
+        return {
+            "status": "success",
+            "agent": self.name,
+            "requested_date": dates_checked[0],
+            "lookahead_days": lookahead_days,
+            "dates_checked": dates_checked,
+            "timezone": self.timezone,
+            "fixtures_found": len(fixtures),
+            "skipped": skipped,
+            "request_errors": request_errors,
+            "fixtures": fixtures,
         }

@@ -1,0 +1,16 @@
+.system-panel{margin:10px 0 40px;padding:28px;border:1px solid var(--line);border-radius:24px;background:linear-gradient(135deg,#ffffff,#f0f8ea)}
+.system-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+.system-card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px;min-width:0}
+.system-card strong{display:block;margin:8px 0;font-size:17px;overflow-wrap:anywhere}
+.system-card small{color:var(--muted);font-size:12px}
+.system-status.good{color:#1f693d}.system-status.blocked{color:#8a4425}.system-status.neutral{color:var(--text)}
+.decision-card{margin-top:16px;padding:20px 22px;border-radius:18px;border:1px solid var(--line);background:#fff}
+.decision-card strong{display:block;font-size:28px;margin:7px 0}.decision-card p{margin:0;color:var(--muted)}
+.decision-card.good{background:#eef8e8;border-color:#c9e2bd}.decision-card.blocked{background:#fff4ed;border-color:#efd0bc}
+.candidate-list{margin-top:20px}.candidate-list h3{font-size:16px}
+.candidate-card{padding:15px 18px;border:1px solid var(--line);border-radius:14px;background:#fff;margin-top:10px}
+.candidate-card p{margin:5px 0 0;color:var(--muted);font-size:13px}
+.button-link{cursor:pointer;border:1px solid var(--line);border-radius:12px;padding:11px 17px;background:white;color:var(--text);font-weight:650;text-decoration:none;font-size:14px}
+.button-link:hover{background:var(--soft)}
+@media(max-width:850px){.system-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:500px){.system-panel{padding:20px 16px}.system-grid{grid-template-columns:1fr}}

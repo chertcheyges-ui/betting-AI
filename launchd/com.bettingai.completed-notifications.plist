@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.bettingai.completed-notifications</string>
+  <key>ProgramArguments</key><array>
+    <string>/Users/newnew/sasha edu/.venv/bin/python</string>
+    <string>/Users/newnew/sasha edu/scripts/notify_completed_matches.py</string>
+  </array>
+  <key>StartInterval</key><integer>600</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>/Users/newnew/sasha edu/logs/completed-notifications.log</string>
+  <key>StandardErrorPath</key><string>/Users/newnew/sasha edu/logs/completed-notifications-error.log</string>
+</dict></plist>

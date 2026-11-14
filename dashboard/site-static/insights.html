@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Betting AI · Почему такой прогноз</title>
+  <link rel="stylesheet" href="app.css">
+  <link rel="stylesheet" href="shell.css">
+  <link rel="stylesheet" href="finance.css">
+  <script src="insights.js" defer></script><script src="nav.js" defer></script>
+</head>
+<body>
+  <header><a class="brand" href="index.html">◉ Betting AI</a><nav class="section-nav" aria-label="Разделы"><details class="nav-group"><summary>Главное</summary><div class="nav-links"><a href="index.html">Статус</a><a href="index.html#matches">Матчи</a><a href="live.html">Live</a></div></details><details class="nav-group" open><summary>Прогнозы</summary><div class="nav-links"><a href="decisions.html">Решения</a><a href="insights.html" aria-current="page">Почему прогноз</a></div></details><details class="nav-group"><summary>Результаты</summary><div class="nav-links"><a href="history.html">История</a><a href="paper.html">Проверка</a></div></details><details class="nav-group"><summary>Управление</summary><div class="nav-links"><a href="finance.html">Финансы</a><a href="audit.html">Отчёт аудитора</a><a href="study.html">Учебная лаборатория</a></div></details></nav></header>
+  <main>
+    <section class="intro"><div><p class="eyebrow">ПРОЗРАЧНЫЙ ПРОГНОЗ</p><h1>Почему я так<br><span>думаю.</span></h1><p class="lead">Здесь показаны все данные, которые программа получила для матча. Пустое поле означает: источник не дал эти данные.</p></div></section>
+    <section id="selected-decision" class="panel" hidden></section>
+    <section class="panel"><h2>Все найденные матчи</h2><p class="muted">Здесь показывается весь список матчей, найденных системой. Подробно проверяются только несколько наиболее интересных — так бесплатный лимит данных не тратится на всё сразу.</p><div id="wide-scan" class="ledger-list"></div></section>
+    <section class="panel"><h2>Будущие матчи</h2><p class="muted">Прогноз может меняться до начала матча. Каждое изменение сохраняется со временем обновления.</p><div id="future" class="ledger-list"></div></section>
+    <section class="panel"><h2>Уже завершённые матчи</h2><p class="muted">Показываем данные, которые были сохранены в момент выбора. Это нельзя поменять задним числом.</p><div id="past" class="ledger-list"></div></section>
+  </main>
+</body>
+</html>

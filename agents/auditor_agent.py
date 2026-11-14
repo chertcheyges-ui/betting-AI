@@ -1,5 +1,10 @@
 """Final controls audit for the betting-analysis pipeline."""
 
+import json
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
 
 class AuditorAgent:
     """Verify data completeness and that downstream agents respected safeguards."""
@@ -10,6 +15,29 @@ class AuditorAgent:
     @staticmethod
     def _as_dict(value):
         return value if isinstance(value, dict) else {}
+
+    @staticmethod
+    def _unresolved_scores():
+        """List paper bets overdue for a result so the audit cannot miss them."""
+        path = Path(__file__).resolve().parents[1] / "data" / "paper_trades.json"
+        try:
+            trades = json.loads(path.read_text(encoding="utf-8")).get("trades", [])
+        except (OSError, ValueError, AttributeError):
+            return []
+        now = datetime.now(timezone.utc)
+        overdue = []
+        for trade in trades:
+            if not isinstance(trade, dict) or trade.get("status") != "OPEN":
+                continue
+            try:
+                kickoff = datetime.fromisoformat(str(trade.get("kickoff")).replace("Z", "+00:00"))
+                if kickoff.tzinfo is None:
+                    kickoff = kickoff.replace(tzinfo=timezone.utc)
+            except (TypeError, ValueError):
+                continue
+            if now >= kickoff.astimezone(timezone.utc) + timedelta(minutes=110):
+                overdue.append({"fixture_id": trade.get("fixture_id"), "event": trade.get("event")})
+        return overdue
 
     def run(self, system_data):
         print(f"{self.name} started.")
@@ -57,6 +85,40 @@ class AuditorAgent:
 
         errors = []
         warnings = []
+        unresolved_scores = self._unresolved_scores()
+        if unresolved_scores:
+            warnings.append(
+                f"Аудит не видит итог у {len(unresolved_scores)} завершённого матча: запущен поиск по резервным источникам."
+            )
+
+        # ==========================================================
+        # DASHBOARD FRESHNESS CHECK
+        # ==========================================================
+        # The dashboard must not silently show a previous day's fixtures.
+        # This check is deliberately independent from the research pipeline:
+        # it verifies the exact snapshot published for the web page.
+        dashboard_report = self._as_dict(system_data.get("dashboard_report"))
+        today = datetime.now(ZoneInfo("Europe/Minsk")).date().isoformat()
+        dashboard_check = {
+            "expected_date": today,
+            "report_date": dashboard_report.get("requested_date"),
+            "matches": len(dashboard_report.get("matches", [])) if isinstance(dashboard_report.get("matches"), list) else 0,
+            "current": False,
+        }
+        if not dashboard_report:
+            errors.append("На сайте нет отчёта по сегодняшним матчам.")
+        elif dashboard_report.get("requested_date") != today:
+            errors.append(
+                "На сайте показан не сегодняшний отчёт по матчам. Нужно обновить данные."
+            )
+        elif not isinstance(dashboard_report.get("matches"), list) or not dashboard_report["matches"]:
+            errors.append("В сегодняшнем отчёте сайта нет матчей.")
+        elif dashboard_report.get("collection_status") == "error":
+            errors.append("Сегодняшний отчёт сайта не удалось получить из источников.")
+        else:
+            dashboard_check["current"] = True
+            if dashboard_report.get("collection_status") == "degraded":
+                warnings.append("Сегодняшний отчёт сайта неполный: часть данных нужно перепроверить.")
 
         # ==========================================================
         # RESEARCH CHECK
@@ -293,8 +355,209 @@ class AuditorAgent:
             "audit_status": audit_status,
             "errors_found": errors,
             "warnings": warnings,
+            "dashboard_check": dashboard_check,
+            "unresolved_scores": unresolved_scores,
             "recommendation": recommendation,
             "message": "Audit completed.",
+        }
+
+    def review_prediction_quality(self, trades):
+        """Explain prediction quality in plain language after matches finish."""
+        settled = [item for item in trades if isinstance(item, dict) and item.get("status") == "SETTLED"]
+        correct = [item for item in settled if item.get("was_correct") is True]
+        incorrect = [item for item in settled if item.get("was_correct") is False]
+        improvements = []
+        applied_changes = [
+            {
+                "title": "Слабые прогнозы отмечаются как риск",
+                "text": "При уверенности ниже 55% обычная виртуальная ставка не делается. В активном тесте возможна небольшая виртуальная ставка с пометкой о риске.",
+            },
+            {
+                "title": "Почти равные варианты отмечаются как риск",
+                "text": "Если преимущество прогноза меньше 10 процентных пунктов, обычная виртуальная ставка не делается. В активном тесте возможна небольшая виртуальная ставка.",
+            },
+            {
+                "title": "Неподтверждённые составы снижают сумму",
+                "text": "В активном тесте матч без подтверждённых составов может получить только уменьшенную виртуальную ставку. Такая ставка отмечается как повышенный риск.",
+            },
+            {
+                "title": "Тест не остаётся без ставки",
+                "text": "Если строгая проверка не нашла обычную ставку, но есть подходящие матчи для наблюдения, система может выбрать несколько лучших вариантов с небольшой виртуальной суммой.",
+            },
+            {
+                "title": "Слишком высокая уверенность проверяется заново",
+                "text": "Если программа показывает более 75% без составов или слишком большое преимущество над коэффициентом, деньги не ставятся.",
+            },
+        ]
+        league_results = {}
+        team_results = {}
+        decision_results = {}
+        patterns = {
+            "low_confidence": 0,
+            "overconfident": 0,
+            "close_calls": 0,
+            "missing_lineups": 0,
+            "missing_injuries": 0,
+        }
+        for trade in settled:
+            decision = str(trade.get("decision") or "UNKNOWN")
+            decision_results.setdefault(decision, []).append(bool(trade.get("was_correct")))
+            evidence = trade.get("evidence_at_decision") or {}
+            league = evidence.get("league") or "Лига не указана"
+            league_results.setdefault(league, []).append(bool(trade.get("was_correct")))
+            for team in (evidence.get("home"), evidence.get("away")):
+                if team:
+                    team_results.setdefault(team, []).append(bool(trade.get("was_correct")))
+            if float(trade.get("model_confidence") or 0) < 45:
+                patterns["low_confidence"] += 1
+            if float(trade.get("model_confidence") or 0) > 75:
+                patterns["overconfident"] += 1
+            probabilities = trade.get("probabilities") or {}
+            selected = float(probabilities.get(trade.get("prediction"), 0) or 0)
+            other = [float(value or 0) for name, value in probabilities.items() if name != trade.get("prediction")]
+            gap = float(trade.get("selection_gap")) if trade.get("selection_gap") is not None else (selected - max(other, default=0.0)) * 100
+            if gap < 5:
+                patterns["close_calls"] += 1
+            missing = evidence.get("missing_data") or []
+            patterns["missing_lineups"] += int("lineups" in missing)
+            patterns["missing_injuries"] += int("injuries" in missing)
+
+        if len(settled) < 20:
+            improvements.append({
+                "title": "Пока рано делать выводы",
+                "text": "Нужно хотя бы 20 завершённых матчей. Сейчас каждый отдельный матч слишком сильно влияет на результат.",
+            })
+        if incorrect:
+            improvements.append({
+                "title": "Не ставить при слабом преимуществе",
+                "text": "Слабые и близкие прогнозы не подходят для обычной виртуальной ставки. В активном тесте небольшая ставка возможна, но её риск нужно показывать явно.",
+            })
+        if patterns["overconfident"]:
+            improvements.append({
+                "title": "Снижаем чрезмерную уверенность",
+                "text": "В прошлых матчах были слишком смелые прогнозы. Без подтверждённых составов их уверенность нужно считать предварительной и перепроверять перед матчем.",
+            })
+        if not improvements:
+            improvements.append({
+                "title": "Продолжаем проверку",
+                "text": "Серьёзных повторяющихся проблем пока не видно. Нужна более длинная серия завершённых матчей.",
+            })
+
+        if patterns["missing_lineups"]:
+            applied_changes.append({
+                "title": "Неподтверждённые составы отмечаются как риск",
+                "text": "Для следующих матчей без составов система снижает доверие к прогнозу и не считает данные полными.",
+            })
+            improvements.append({
+                "title": "Проверять составы ближе к матчу",
+                "text": "В некоторых прошлых прогнозах не было составов. Это отмечается как риск и влияет на итоговую уверенность.",
+            })
+
+        # These are concrete controls that the rest of the system already
+        # understands.  The auditor uses every finished forecast here, even a
+        # no-money observation, but avoids changing model weights on a tiny
+        # sample (that would merely overfit the latest losses).
+        learning_actions = []
+        if patterns["low_confidence"] or patterns["close_calls"]:
+            learning_actions.append({
+                "title": "Слабые и близкие прогнозы отмечены",
+                "text": "Аудитор учитывает эти ошибки в общей статистике. Для следующих матчей они остаются только в активном тесте с небольшой суммой, а не становятся обычной ставкой.",
+            })
+        if patterns["missing_lineups"] or patterns["missing_injuries"]:
+            learning_actions.append({
+                "title": "Неполные составы отмечены",
+                "text": "Следующий прогноз без составов или данных о травмах получает пониженную уверенность и требует повторной проверки до начала матча.",
+            })
+        if len(settled) < 20:
+            learning_actions.append({
+                "title": "Перенастройка модели ещё не включена",
+                "text": "Нужно не менее 20 завершённых прогнозов. До этого аудитор исправляет явные причины ошибок, но не переобучает модель на слишком маленькой выборке.",
+            })
+
+        mistakes = []
+        for trade in incorrect:
+            probabilities = trade.get("probabilities") or {}
+            predicted = float(probabilities.get(trade.get("prediction"), 0) or 0) * 100
+            ordered = sorted((float(value or 0) * 100 for value in probabilities.values()), reverse=True)
+            gap = round(ordered[0] - ordered[1], 1) if len(ordered) > 1 else None
+            evidence = trade.get("evidence_at_decision") or {}
+            missing = evidence.get("missing_data") or []
+            reasons = list(trade.get("reasons") or [])
+            if "lineups" in missing:
+                reasons.append("Не было подтверждённых составов.")
+            if "injuries" in missing:
+                reasons.append("Не хватало данных о травмах.")
+            if float(trade.get("selection_gap") or 100) < 5:
+                reasons.append("Варианты были слишком близкими.")
+            mistakes.append({
+                "event": trade.get("event") or "Матч",
+                "prediction": trade.get("prediction"),
+                "actual_outcome": trade.get("actual_outcome"),
+                "odds": trade.get("odds"),
+                "confidence": round(predicted, 1),
+                "gap": gap,
+                "reasons": reasons or ["Матч закончился иначе, чем ожидала модель."],
+            })
+
+        results = []
+        for trade in sorted(settled, key=lambda item: item.get("settled_at") or "", reverse=True):
+            probabilities = trade.get("probabilities") or {}
+            prediction = trade.get("prediction")
+            results.append({
+                "event": trade.get("event") or "Матч",
+                "prediction": prediction,
+                "actual_outcome": trade.get("actual_outcome"),
+                "odds": trade.get("odds"),
+                "confidence": round(float(probabilities.get(prediction, 0) or 0) * 100, 1),
+                "was_correct": bool(trade.get("was_correct")),
+            })
+
+        accuracy = round(len(correct) / len(settled) * 100, 1) if settled else None
+        def rating(items):
+            return [
+                {"name": name, "tested": len(results), "accuracy": round(sum(results) / len(results) * 100, 1) if results else None,
+                 "status": "Данных пока мало" if len(results) < 3 else "Можно сравнивать"}
+                for name, results in sorted(items.items(), key=lambda item: (-len(item[1]), item[0]))
+            ]
+        decision_labels = {
+            "PAPER BET": "Виртуальная ставка",
+            "WATCH": "Наблюдение без денег",
+            "NO BET": "Не ставим",
+        }
+        by_decision = [
+            {
+                "decision": decision,
+                "label": decision_labels.get(decision, decision),
+                "tested": len(values),
+                "correct": sum(values),
+                "accuracy": round(sum(values) / len(values) * 100, 1) if values else None,
+            }
+            for decision, values in sorted(decision_results.items())
+        ]
+        summary = (
+            "Пока нет завершённых матчей для проверки прогнозов."
+            if not settled else
+            f"Проверено матчей: {len(settled)}. Совпало: {len(correct)}, не совпало: {len(incorrect)}."
+        )
+        generated_at = datetime.now(timezone.utc).isoformat()
+        return {
+            "schema_version": 1,
+            "generated_at": generated_at,
+            "updated_at": generated_at,
+            "agent": self.name,
+            "summary": summary,
+            "tested": len(settled),
+            "correct": len(correct),
+            "incorrect": len(incorrect),
+            "accuracy": accuracy,
+            "mistakes": mistakes,
+            "results": results,
+            "applied_changes": applied_changes,
+            "improvements": improvements,
+            "learning_actions": learning_actions,
+            "by_decision": by_decision,
+            "patterns": patterns,
+            "reliability": {"leagues": rating(league_results), "teams": rating(team_results)},
         }
 
 

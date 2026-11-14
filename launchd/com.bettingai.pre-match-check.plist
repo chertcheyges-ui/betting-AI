@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.bettingai.pre-match-check</string>
+  <key>ProgramArguments</key><array>
+    <string>/Users/newnew/sasha edu/.venv/bin/python</string>
+    <string>/Users/newnew/sasha edu/scripts/refresh_pre_match_checks.py</string>
+  </array>
+  <key>StartInterval</key><integer>1800</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>/Users/newnew/sasha edu/logs/pre-match-check.log</string>
+  <key>StandardErrorPath</key><string>/Users/newnew/sasha edu/logs/pre-match-check-error.log</string>
+</dict></plist>

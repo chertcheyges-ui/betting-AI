@@ -4,9 +4,11 @@
 class RiskManager:
     """Apply hard risk gates before a candidate reaches the CFO agent."""
 
-    MIN_EDGE_PERCENT = 2.0
-    MIN_EV_PERCENT = 1.0
-    MAX_EDGE_PERCENT = 15.0
+    MIN_EDGE_PERCENT = 3.0
+    MIN_EV_PERCENT = 2.0
+    MAX_EDGE_PERCENT = 12.0
+    MIN_DATASET_QUALITY = 85.0
+    PROVISIONAL_MIN_DATASET_QUALITY = 70.0
 
     def __init__(self):
         self.name = "Risk Manager"
@@ -37,6 +39,7 @@ class RiskManager:
         ev = self._number(analysis.get("ev"))
         model_probability = self._number(analysis.get("model_probability"))
         market_probability = self._number(analysis.get("market_probability"))
+        dataset_quality = self._number(analysis.get("dataset_quality"))
 
         missing_metrics = [
             name for name, value in (
@@ -58,12 +61,21 @@ class RiskManager:
             }
 
         flags = []
+        provisional_flags = []
         if edge < self.MIN_EDGE_PERCENT:
             flags.append(f"Edge below {self.MIN_EDGE_PERCENT:.1f}%.")
         if ev < self.MIN_EV_PERCENT:
             flags.append(f"EV below {self.MIN_EV_PERCENT:.1f}%.")
         if edge > self.MAX_EDGE_PERCENT:
-            flags.append("Edge is unusually high and requires data validation.")
+            flags.append("Преимущество над коэффициентом слишком велико: сначала нужна повторная проверка данных.")
+        if dataset_quality is None or dataset_quality < self.PROVISIONAL_MIN_DATASET_QUALITY:
+            flags.append("Недостаточно подтверждённых данных для виртуальной ставки.")
+        elif dataset_quality < self.MIN_DATASET_QUALITY:
+            provisional_flags.append("Данные неполные: виртуальная ставка будет уменьшена.")
+        if not analysis.get("lineups_confirmed"):
+            provisional_flags.append("Нет подтверждённых стартовых составов: виртуальная ставка будет уменьшена.")
+        if model_probability is not None and model_probability > 75 and not analysis.get("lineups_confirmed"):
+            flags.append("Высокая уверенность без составов считается ненадёжной.")
 
         if flags:
             return {
@@ -73,17 +85,17 @@ class RiskManager:
                 "risk_flags": flags,
                 "edge": edge,
                 "ev": ev,
-                "message": "Candidate failed the risk gate.",
+            "message": "Матч не прошёл строгую проверку риска.",
             }
 
         return {
             "event": event,
-            "risk_level": "MEDIUM",
+            "risk_level": "MEDIUM" if not provisional_flags else "MEDIUM WITH CONDITIONS",
             "stake_decision": "CFO REVIEW REQUIRED",
-            "risk_flags": ["Position size must be set by the CFO agent."],
+            "risk_flags": provisional_flags + ["Position size must be set by the CFO agent."],
             "edge": edge,
             "ev": ev,
-            "message": "Candidate passed initial risk gates.",
+            "message": "Матч прошёл активную проверку риска." if provisional_flags else "Матч прошёл первоначальную проверку риска.",
         }
 
     def run(self, analysis_data):
@@ -106,7 +118,21 @@ class RiskManager:
         if not isinstance(results, list):
             results = []
 
-        assessments = [self.assess(item) for item in results if isinstance(item, dict)]
+        assessments = []
+        forecast_fields = (
+            "status", "prediction", "selection", "odds", "model_probability",
+            "market_probability", "edge", "ev", "market", "bookmaker",
+            "dataset_quality", "lineups_confirmed", "confidence_cap",
+        )
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            assessment = self.assess(item)
+            # Preserve the model explanation for the dashboard and audit trail.
+            for field in forecast_fields:
+                if field in item:
+                    assessment[field] = item[field]
+            assessments.append(assessment)
         candidates = [
             assessment for assessment in assessments
             if assessment["stake_decision"] == "CFO REVIEW REQUIRED"

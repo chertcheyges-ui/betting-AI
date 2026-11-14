@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Betting AI · Отчёт аудитора</title>
+  <link rel="stylesheet" href="app.css"><link rel="stylesheet" href="shell.css"><link rel="stylesheet" href="finance.css">
+  <script src="audit.js" defer></script><script src="nav.js" defer></script>
+</head>
+<body>
+  <header><a class="brand" href="index.html">◉ Betting AI</a><nav class="section-nav" aria-label="Разделы"><details class="nav-group"><summary>Главное</summary><div class="nav-links"><a href="index.html">Статус</a><a href="index.html#matches">Матчи</a><a href="live.html">Live</a></div></details><details class="nav-group"><summary>Прогнозы</summary><div class="nav-links"><a href="decisions.html">Решения</a><a href="insights.html">Почему прогноз</a></div></details><details class="nav-group"><summary>Результаты</summary><div class="nav-links"><a href="history.html">История</a><a href="paper.html">Проверка</a></div></details><details class="nav-group" open><summary>Управление</summary><div class="nav-links"><a href="finance.html">Финансы</a><a href="audit.html" aria-current="page">Отчёт аудитора</a><a href="study.html">Учебная лаборатория</a></div></details></nav></header>
+  <main>
+    <section class="intro"><div><p class="eyebrow">ПРОВЕРКА КАЧЕСТВА</p><h1>Что работает.<br><span>Что улучшить.</span></h1><p class="lead">Аудитор проверяет завершённые прогнозы и объясняет ошибки простыми словами.</p></div></section>
+    <section class="summary"><article><span class="muted">Матчей проверено</span><strong id="tested">—</strong></article><article><span class="muted">Угадано</span><strong id="correct">—</strong></article><article><span class="muted">Точность</span><strong id="accuracy">—</strong></article></section>
+    <section class="panel"><h2>Вывод аудитора</h2><p id="summary" class="lead">Загружаю отчёт…</p></section>
+    <section class="panel"><h2>Почему прогнозы не совпали</h2><div id="mistakes" class="ledger-list"></div></section>
+    <section class="panel"><h2>Все проверенные прогнозы</h2><p class="muted">Коэффициент показан таким, каким он был в момент виртуального решения.</p><div id="results" class="ledger-list"></div></section>
+    <section class="panel"><h2>Где прогнозы надёжнее</h2><p class="muted">Рейтинг станет полезным после трёх и более завершённых матчей в одной лиге или с одной командой.</p><div id="reliability" class="ledger-list"></div></section>
+    <section class="panel"><h2>Каких данных не хватало</h2><div id="patterns" class="ledger-list"></div></section>
+    <section class="panel"><h2>Итог аудитора: что я уже изменил и что улучшаю дальше</h2><p class="muted">Этот отчёт обновляется после проверки завершённых матчей. Я не меняю прошлые прогнозы — только правила для следующих.</p><div id="improvements" class="ledger-list"></div></section>
+  </main>
+</body>
+</html>

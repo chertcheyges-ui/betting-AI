@@ -48,7 +48,8 @@ def main():
     print("\n=== BETTING AI SYSTEM ===\n")
 
     research_data = ResearchAgent().run()
-    prepared_data = DataManager().run(research_data)
+    # Keep live API usage bounded; priority ranking happens in ResearchAgent.
+    prepared_data = DataManager(max_fixtures=2).run(research_data)
     analysis = QuantitativeSportsAnalyst().run(prepared_data)
     risk = RiskManager().run(analysis)
     financial_review = CFOAgent().run(risk)

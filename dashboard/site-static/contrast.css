@@ -1,0 +1,18 @@
+/* High-contrast reading layer: the light information cards always use dark text. */
+body{background:#eef3f9!important;color:#0b1f38!important}
+header{background:#09213f!important;border-color:#173e68!important}
+main{color:#0b1f38!important}
+.system-panel,.panel,.match-card,.ledger-row,.system-card,.candidate-card,.decision-card,.summary article{background:#ffffff!important;border-color:#b7c8dc!important;color:#0b1f38!important;box-shadow:0 10px 28px #0c2b4a18!important}
+.system-panel{background:linear-gradient(135deg,#ffffff,#edf5ff)!important}
+main h1,main h2,main h3,main strong,main p,main span,main small,main label,.muted,.lead,.report-info,.card-meta,.ledger-row p,.candidate-card p,.decision-card p{color:#061a33!important;text-shadow:none!important;opacity:1!important}
+main .eyebrow,main h1 span,.fixture-score,a,.reason-link{color:#116bc2!important}
+.muted,.card-meta,.ledger-row p,.candidate-card p,.decision-card p,.report-info{color:#244b73!important}
+.primary{background:#1676d2!important;color:#ffffff!important;border-color:#1676d2!important;box-shadow:none!important}
+.primary:hover{background:#0e5da9!important}
+button,.button-link{background:#ffffff!important;color:#0b1f38!important;border-color:#7492b1!important}
+button:hover,.button-link:hover,.decision-row:hover{background:#e7f1fc!important;color:#081a31!important}
+input,select{background:#ffffff!important;color:#0b1f38!important;border-color:#7492b1!important}
+.badge,.section-note,code{background:#e8f2fc!important;color:#173e68!important;border-color:#b7c8dc!important}
+.system-status.good,.income{color:#147443!important}.system-status.blocked,.expense{color:#a93232!important}.system-status.neutral{color:#0b1f38!important}
+.decision-card.good{background:#e8f7ef!important;border-color:#78c59c!important}.decision-card.blocked{background:#fff0f0!important;border-color:#e3a4a4!important}
+.nav-group summary,.nav-main-link,.nav-links a{color:#dcecff!important}.nav-links{background:#0c2748!important;border-color:#2d5e90!important}.nav-group[open] summary,.nav-group summary:hover,.nav-main-link:hover,.nav-main-link[aria-current="page"],.nav-links a:hover,.nav-links a[aria-current="page"]{background:#174a7e!important;color:#ffffff!important}

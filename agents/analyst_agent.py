@@ -603,6 +603,44 @@ class QuantitativeSportsAnalyst:
             )
         }
 
+    @staticmethod
+    def apply_confidence_guard(probabilities, event):
+        """Reduce unjustified certainty when pre-match information is incomplete.
+
+        The learned model can be overconfident on a small, imperfect sample.
+        This guard does not invent a new forecast; it limits certainty until
+        the data quality and starting lineups justify a stronger claim.
+        """
+        values = dict(probabilities or {})
+        quality = event.get("dataset_quality")
+        lineups = event.get("lineups")
+        lineups_confirmed = isinstance(lineups, list) and bool(lineups)
+        cap = 0.75
+        note = None
+
+        if not isinstance(quality, (int, float)) or quality < 85 or not lineups_confirmed:
+            cap = 0.60
+            note = "Уверенность ограничена до 60%: нет полной проверки данных или подтверждённых составов."
+        elif quality < 95:
+            cap = 0.70
+            note = "Уверенность ограничена до 70%: часть данных ещё не подтверждена."
+
+        selection = max(values, key=values.get, default=None)
+        if selection is None or values.get(selection, 0.0) <= cap:
+            return values, cap, note
+
+        excess = values[selection] - cap
+        values[selection] = cap
+        other_names = [name for name in values if name != selection]
+        other_total = sum(values[name] for name in other_names)
+        if other_total > 0:
+            for name in other_names:
+                values[name] += excess * values[name] / other_total
+        elif other_names:
+            for name in other_names:
+                values[name] += excess / len(other_names)
+        return values, cap, note
+
     # ==========================================================
     # ODDS
     # ==========================================================
@@ -942,6 +980,24 @@ class QuantitativeSportsAnalyst:
             f"{home_team} vs {away_team}"
         )
 
+        # A schedule warning can invalidate a fixture altogether.  Team-news
+        # headlines, however, are handled as an incomplete-lineup condition
+        # downstream: they reduce the virtual amount instead of making every
+        # same-day match unavailable.
+        external_topics = {
+            topic
+            for signal in event.get("external_signals", [])
+            if isinstance(signal, dict)
+            for topic in signal.get("topics", [])
+        }
+        if event.get("external_review_required") and "schedule" in external_topics:
+            return {
+                "status": "NOT READY",
+                "event": event_name,
+                "missing_data": ["external_confirmation"],
+                "message": "Внешние новости сообщили о возможном изменении состава, травме или расписании. Ждём подтверждения.",
+            }
+
         # ------------------------------------------------------
         # MODEL
         # ------------------------------------------------------
@@ -1007,10 +1063,13 @@ class QuantitativeSportsAnalyst:
                 )
             )
 
-            probabilities = (
+            raw_probabilities = (
                 self.predict_probabilities(
                     vector
                 )
+            )
+            probabilities, confidence_cap, confidence_note = self.apply_confidence_guard(
+                raw_probabilities, event
             )
 
         except (
@@ -1049,6 +1108,16 @@ class QuantitativeSportsAnalyst:
                 ],
                 "model_probabilities":
                     probabilities,
+
+                "raw_model_probabilities": raw_probabilities,
+
+                "confidence_cap": confidence_cap * 100.0,
+
+                "confidence_note": confidence_note,
+
+                "dataset_quality": event.get("dataset_quality"),
+
+                "lineups_confirmed": isinstance(event.get("lineups"), list) and bool(event.get("lineups")),
                 "message": (
                     "No valid Match Winner "
                     "market is available."
@@ -1134,6 +1203,16 @@ class QuantitativeSportsAnalyst:
 
             "model_probabilities":
                 probabilities,
+
+            "raw_model_probabilities": raw_probabilities,
+
+            "confidence_cap": confidence_cap * 100.0,
+
+            "confidence_note": confidence_note,
+
+            "dataset_quality": event.get("dataset_quality"),
+
+            "lineups_confirmed": isinstance(event.get("lineups"), list) and bool(event.get("lineups")),
 
             "markets":
                 markets,
