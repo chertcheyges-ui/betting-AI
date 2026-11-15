@@ -32,16 +32,18 @@ async function load() {
     $('updated').textContent = 'Дата матчей: ' + (report.requested_date || '—') + ' · обновлено: ' + date(report.generated_at) + ' · источник: ' + (report.source || '—');
     const root = $('matches'); root.replaceChildren();
     if (!matches.length) { const empty = document.createElement('p'); empty.textContent = 'На сегодня источник не вернул баскетбольные матчи.'; root.append(empty); }
-    { const recommendations=new Map((analysis?.recommendations||[]).map(item=>[String(item.match_id),item])); const trades=new Map((ledger.trades||[]).map(item=>[String(item.fixture_id),item])); ['В обработке','Ждут результата','Готовые'].forEach(title => { const items=matches.filter(match=>groupTitle(match)===title); if(!items.length)return; const section=document.createElement('section'); section.className='match-group'; section.style.gridColumn='1 / -1'; const heading=document.createElement('h2');heading.textContent=title;const list=document.createElement('div');list.className='grid';items.forEach(match=>list.append(card(match,recommendations.get(String(match.id)),trades.get(String(match.id)),analysis)));section.append(heading,list);root.append(section); });
+    { const recommendations=new Map((analysis?.recommendations||[]).map(item=>[String(item.match_id),item])); const trades=new Map((ledger.trades||[]).map(item=>[String(item.fixture_id),item])); ['В обработке','Ждут результата','Готовые'].forEach(title => { const items=matches.filter(match=>groupTitle(match)===title); if(!items.length)return; const section=document.createElement('section'); section.className='match-group'; section.style.gridColumn='1 / -1'; const heading=document.createElement('h2');heading.textContent=title;const list=document.createElement('div');list.className='grid';renderMatchGroups(list, items, match => matchCategory(trades.get(String(match.id)), basketballForecast(match, analysis)?.prediction), match => card(match,recommendations.get(String(match.id)),trades.get(String(match.id)),analysis), 'grid');section.append(heading,list);root.append(section); });
       const upcoming = Array.isArray(report.upcoming_matches) ? report.upcoming_matches : [];
       if (upcoming.length) {
         const heading = document.createElement('h2');
         heading.textContent = 'Предстоящие матчи · следующий день';
         heading.style.gridColumn = '1 / -1';
         root.append(heading);
-        for (const match of upcoming) {
-          root.append(card(match, recommendations.get(String(match.id)), trades.get(String(match.id)), analysis));
-        }
+        const list = document.createElement('div');
+        list.style.gridColumn = '1 / -1';
+        renderMatchGroups(list, upcoming, match => matchCategory(trades.get(String(match.id)), basketballForecast(match, analysis)?.prediction),
+          match => card(match, recommendations.get(String(match.id)), trades.get(String(match.id)), analysis), 'grid');
+        root.append(list);
       }
     }
   } catch { renderApprovedBets($('approved-bets'), null); $('updated').textContent = 'Данные временно недоступны. Повторите обновление позже.'; }

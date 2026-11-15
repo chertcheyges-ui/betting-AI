@@ -16,21 +16,30 @@ function card(match, trade) {
   const details = document.createElement('p'); details.className = 'muted'; details.textContent = (match.league || 'Лига не указана') + ' · начало: ' + formatDate(match.kickoff);
   const forecast = document.createElement('p'); forecast.className = 'muted';
   forecast.textContent = trade
-    ? (trade.was_correct ? '✅ Прогноз совпал' : '❌ Прогноз не совпал') + ' · прогноз: ' + outcome(eventName(match), trade.prediction) + ' · виртуальный итог: ' + new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'USD' }).format(trade.virtual_pnl || 0)
+    ? (trade.was_correct ? '✅ Прогноз совпал' : '❌ Прогноз не совпал') + ' · прогноз: ' + outcome(eventName(match), trade.prediction) + (hasVirtualStake(trade) ? ' · виртуальный итог: ' + new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'USD' }).format(trade.virtual_pnl || 0) : ' · без ставки')
     : 'По этому матчу система не делала отдельный прогноз.';
   item.append(title, score, details, forecast); return item;
 }
 async function load() {
   try {
-    const [historyResponse, paperResponse] = await Promise.all([fetch('history.json', { cache: 'no-store' }), fetch('paper-trading.json', { cache: 'no-store' })]);
+    const [historyResponse, paperResponse, wide] = await Promise.all([fetch('history.json', { cache: 'no-store' }), fetch('paper-trading.json', { cache: 'no-store' }), loadOptionalMatchData('wide-testing.json')]);
     const history = await historyResponse.json(); const paper = await paperResponse.json(); if (!historyResponse.ok || !paperResponse.ok) throw Error();
     const trades = new Map((paper.trades || []).filter(item => item.status === 'SETTLED').map(item => [String(item.fixture_id), item]));
     const records = new Map((history.matches || []).map(item => [String(item.fixture_id), item]));
     trades.forEach((trade, id) => { if (!records.has(id)) { const [home, away] = String(trade.event || '').split(' vs '); records.set(id, { fixture_id: trade.fixture_id, home, away, kickoff: trade.kickoff }); } });
+    const matchIds = new Map([...records].map(([id, match]) =>
+      [footballObservationKey({event: eventName(match), kickoff: match.kickoff}), id]));
+    for (const test of footballObservations(wide, paper.trades || [])) {
+      if (test.status !== 'SETTLED') continue;
+      const id = matchIds.get(footballObservationKey(test)) || test.fixture_id;
+      if (!trades.has(id)) trades.set(id, test);
+      if (!records.has(id)) records.set(id, {...test});
+    }
     const all = [...records.values()].sort((a, b) => String(b.kickoff || '').localeCompare(String(a.kickoff || '')));
     root.replaceChildren();
     if (!all.length) { updated.textContent = 'Завершённых матчей пока нет.'; return; }
-    all.forEach(match => root.append(card(match, trades.get(String(match.fixture_id)))));
+    renderMatchGroups(root, all, match => matchCategory(trades.get(String(match.fixture_id))),
+      match => card(match, trades.get(String(match.fixture_id))), 'match-grid');
     updated.textContent = 'В полном архиве: ' + all.length + ' завершённых матчей. Прогноз отмечен там, где он был сделан.';
   } catch { updated.textContent = 'Не удалось загрузить историю.'; }
 }

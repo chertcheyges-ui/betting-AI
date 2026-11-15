@@ -10,11 +10,15 @@ async function loadBasketballForecasts() {
   return null;
 }
 
+function basketballForecast(match, analysis) {
+  return analysis?.forecast_history?.[String(match.id)]
+    || analysis?.recommendations?.find(item => String(item.match_id) === String(match.id));
+}
+
 function basketballForecastLine(match, analysis, currentForecast) {
   const line = document.createElement('p');
   line.className = 'meta';
-  const forecast = currentForecast || analysis?.forecast_history?.[String(match.id)]
-    || analysis?.recommendations?.find(item => String(item.match_id) === String(match.id));
+  const forecast = currentForecast || basketballForecast(match, analysis);
   const team = {HOME_WIN: match.home, AWAY_WIN: match.away}[forecast?.prediction];
   if (!team) {
     line.textContent = analysis ? 'Прогноз без ставки не сохранён.' : 'Прогнозы временно недоступны.';

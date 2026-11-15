@@ -15,8 +15,8 @@ function predictionName(event, prediction) {
 function card(trade, message) {
   const el = document.createElement('article');
   el.className = 'ledger-row decision-row';
-  el.tabIndex = 0;
-  el.setAttribute('role', 'link');
+  if (trade.fixture_id) el.tabIndex = 0;
+  if (trade.fixture_id) el.setAttribute('role', 'link');
   el.setAttribute('aria-label', 'Открыть причину решения по матчу ' + (trade.event || ''));
   const box = document.createElement('div');
   const title = document.createElement('strong');
@@ -27,48 +27,37 @@ function card(trade, message) {
   const link = document.createElement('span');
   link.className = 'reason-link';
   link.textContent = 'Почему это решение →';
-  el.append(box, link);
+  el.append(box);
+  if (!trade.fixture_id) return el;
+  el.append(link);
   el.onclick = () => openReason(trade);
   el.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openReason(trade); } };
   return el;
 }
 
 async function load() {
+  const status = $('decisions-status');
   try {
-    const response = await fetch('paper-trading.json', { cache: 'no-store' });
-    const data = await response.json();
-    if (!response.ok) throw Error();
-    const all = data.trades || [];
-    const approved = all.filter(trade => trade.decision === 'PAPER BET');
-    const watch = all.filter(trade => trade.decision === 'WATCH');
-    const skip = all.filter(trade => trade.decision === 'NO BET');
-    $('approved-count').textContent = approved.length;
-    $('watch-count').textContent = watch.length;
-    $('skip-count').textContent = skip.length;
-    const approvedRoot = $('approved');
-    const watchRoot = $('watch');
-    const skipRoot = $('skip');
-    approvedRoot.replaceChildren();
-    watchRoot.replaceChildren();
-    skipRoot.replaceChildren();
-    if (!approved.length) approvedRoot.textContent = 'Пока я не поставил виртуальные деньги.';
-    else approved.forEach(trade => approvedRoot.append(card(trade, 'начало: ' + formatDate(trade.kickoff) + ' · виртуально поставил ' + usd(trade.stake) + (trade.status === 'SETTLED' ? ' · итог: ' + usd(trade.virtual_pnl) + ' · результат подтверждён: ' + formatDate(trade.settled_at) : ' · ждём результат'))));
-    if (!watch.length) watchRoot.textContent = 'Все сохранённые прогнозы достаточно уверенные.';
-    else watch.forEach(trade => {
-      const reason = Array.isArray(trade.decision_reasons) && trade.decision_reasons.length
-        ? trade.decision_reasons[0]
-        : 'я недостаточно уверен в этом прогнозе.';
-      watchRoot.append(card(trade, 'начало: ' + formatDate(trade.kickoff) + ' · ' + reason + (trade.status === 'SETTLED' ? ' · результат подтверждён: ' + formatDate(trade.settled_at) : '')));
-    });
-    if (!skip.length) skipRoot.textContent = 'Пока нет матчей, которые система полностью отклонила.';
-    else skip.forEach(trade => {
-      const reason = Array.isArray(trade.decision_reasons) && trade.decision_reasons.length
-        ? trade.decision_reasons[0]
-        : 'для этого матча не хватает подтверждённых данных.';
-      skipRoot.append(card(trade, 'начало: ' + formatDate(trade.kickoff) + ' · ' + reason));
-    });
+    const [paper, broad] = await Promise.all([
+      loadOptionalMatchData('paper-trading.json'),
+      loadOptionalMatchData('broad-analysis.json'),
+    ]);
+    if (!paper && !broad) throw Error();
+    const now = Date.now();
+    const upcoming = item => Date.parse(item.kickoff) > now;
+    const ledger = (paper?.trades || []).filter(item => item.status === 'OPEN' && upcoming(item));
+    const keys = new Set(ledger.map(footballObservationKey));
+    const preliminary = (broad?.matches || []).filter(item => upcoming(item) && !keys.has(footballObservationKey(item)));
+    const rows = [...ledger, ...preliminary].sort((a, b) => Date.parse(a.kickoff) - Date.parse(b.kickoff));
+    renderMatchGroups($('match-decisions'), rows, item => matchCategory(item), item => {
+      const detail = hasVirtualStake(item)
+        ? 'виртуальная сумма ' + usd(item.stake)
+        : item.decision_reasons?.[0] || item.message || 'без ставки';
+      return card(item, 'начало: ' + formatDate(item.kickoff) + ' · ' + detail);
+    }, 'ledger-list');
+    status.textContent = 'Предстоящих матчей: ' + rows.length + '.';
   } catch {
-    $('approved').textContent = 'Пока не вижу список решений.';
+    status.textContent = 'Не удалось загрузить список решений.';
   }
 }
 load();

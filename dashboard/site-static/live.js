@@ -12,21 +12,28 @@ function card(trade, live) {
   title.textContent = trade.event || 'Матч';
   if (live?.error) note.textContent = 'Начало: ' + date(trade.kickoff) + ' · временно не удалось получить счёт.';
   else if (live) note.textContent = 'Счёт: ' + (live.goals_home ?? '—') + ' : ' + (live.goals_away ?? '—') + ' · ' + (live.status_text || live.status || 'статус уточняется') + (live.elapsed ? ' · ' + live.elapsed + ' мин.' : '') + ' · прогноз: ' + choice(trade.event, trade.prediction);
-  else note.textContent = 'Начало: ' + date(trade.kickoff) + ' · матч ещё не получен от источника.';
+  else note.textContent = 'Начало: ' + date(trade.kickoff) + ' · ждём подтверждённый счёт.';
+  if (!live || live.error) note.textContent += ' · прогноз: ' + choice(trade.event, trade.prediction);
   body.append(title, note); item.append(body); return item;
 }
 async function refresh() {
   try {
-    const paperResponse = await fetch('paper-trading.json', { cache: 'no-store' });
-    const paper = await paperResponse.json(); if (!paperResponse.ok) throw Error();
-    const trades = (paper.trades || []).filter(item => item.status === 'OPEN');
-    if (!trades.length) { root.textContent = 'Сейчас нет открытых виртуальных прогнозов.'; status.textContent = 'Нет матчей для живой проверки.'; return; }
-    const ids = trades.map(item => item.fixture_id).filter(Boolean);
-    const liveResponse = await fetch('/api/live?ids=' + encodeURIComponent(ids.join(',')), { cache: 'no-store' });
-    const live = await liveResponse.json(); if (!liveResponse.ok) throw Error();
-    const byId = new Map((live.matches || []).map(item => [String(item.fixture_id), item]));
-    root.replaceChildren(); trades.forEach(trade => root.append(card(trade, byId.get(String(trade.fixture_id)))));
-    status.textContent = 'Последняя проверка: ' + date(live.checked_at) + '. Следующая — автоматически примерно через 10 минут.';
+    const [paper, wide] = await Promise.all([
+      loadOptionalMatchData('paper-trading.json'), loadOptionalMatchData('wide-testing.json'),
+    ]);
+    if (!paper && !wide) throw Error();
+    const now = Date.now();
+    const ledger = paper?.trades || [];
+    const trades = [...ledger, ...footballObservations(wide, ledger)].filter(item =>
+      item.status === 'OPEN' && Date.parse(item.kickoff) <= now);
+    const ids = trades.filter(item => !item.observation).map(item => item.fixture_id).filter(Boolean);
+    const live = ids.length ? await loadOptionalMatchData('/api/live?ids=' + encodeURIComponent(ids.join(','))) : null;
+    const byId = new Map((live?.matches || []).map(item => [String(item.fixture_id), item]));
+    renderMatchGroups(root, trades, item => matchCategory(item),
+      trade => card(trade, byId.get(String(trade.fixture_id))), 'ledger-list');
+    status.textContent = live?.checked_at
+      ? 'Последняя проверка: ' + date(live.checked_at) + '.'
+      : trades.length ? 'Живой счёт пока недоступен.' : 'Сейчас нет матчей, ожидающих результата.';
   } catch { status.textContent = 'Не удалось получить живой счёт. Повторим проверку автоматически.'; }
 }
 refresh(); setInterval(refresh, 10 * 60 * 1000);
