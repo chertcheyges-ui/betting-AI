@@ -11,6 +11,7 @@ const matchScore=m=>m.goals_home!==null&&m.goals_away!==null?m.goals_home+' : '+
 let report = null, selected = null, lastFocus = null, loadRevision=0;
 let systemSnapshot = null;
 let paperSnapshot = null;
+let footballScan = null;
 const number = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 const text = (value, fallback = 'Не указано') => typeof value === 'string' && value.trim() ? value.slice(0,300) : fallback;
@@ -140,7 +141,7 @@ function simpleStatus(value) { const labels = {"NO BET":"Не ставим", "NO
 function addSystemCard(label, value, detail='') { const card=element('article',undefined,'system-card'); card.append(element('span',label,'muted'),element('strong',systemText(value),'system-status '+statusClass(value)),element('small',detail||' ')); return card; }
 function renderSystem() {
   const root=$('system-cards'); root.replaceChildren(); const decisionRoot=$('system-decision'); const candidatesRoot=$('system-candidates'); candidatesRoot.replaceChildren();
-  if(!systemSnapshot) { root.append(addSystemCard('Система','Нет сохранённого запуска','Запустите обновление данных на компьютере, где хранится проект.')); decisionRoot.hidden=true; return; }
+  if(!systemSnapshot) { root.append(addSystemCard('Система','Нет сохранённого запуска','Запустите обновление данных на компьютере, где хранится проект.')); decisionRoot.hidden=true; renderFootballScan(candidatesRoot, []); return; }
   const s=systemSnapshot; const r=s.research||{}, d=s.data||{}, analysis=s.analysis||{}, risk=s.risk||{}, f=s.financial||{}, audit=s.audit||{}, committee=s.committee||{};
   const pageCheck=audit.dashboard_check||{};
   const auditDetail=pageCheck.current ? 'Сегодняшние матчи на сайте: '+(pageCheck.matches||0) : (pageCheck.expected_date ? 'Сегодняшний отчёт нужно обновить.' : simpleStatus(audit.recommendation));
@@ -154,9 +155,46 @@ function renderSystem() {
   const picks=element('div');
   decisionRoot.append(picks);
   renderApprovedBets(picks,paperSnapshot,predictionName);
-  const forecasts=analysis.forecasts||[];
+  const forecasts=(analysis.forecasts||[]).filter(item => Date.parse(item.kickoff) > Date.now());
   if(forecasts.length) { candidatesRoot.append(element('h3','Мои прогнозы')); for(const c of forecasts) { const card=element('article',undefined,'candidate-card'); const forecast=predictionName(c.event,c.selection||c.prediction); const verdict=c.status==='READY'&&c.selection?'Готов поставить виртуально':'Только наблюдаю: я недостаточно уверен'; card.append(element('strong',systemText(c.event,'Матч не указан')+' · '+forecast),element('p',[verdict,c.model_probability!==undefined&&'уверенность '+Number(c.model_probability).toFixed(1)+'%',c.odds!==undefined&&'коэффициент '+c.odds].filter(Boolean).join(' · '))); candidatesRoot.append(card); } }
-  else { candidatesRoot.append(element('p','Сейчас нет готовых прогнозов.','muted')); }
+  renderFootballScan(candidatesRoot, forecasts);
+}
+function renderFootballScan(root, detailed) {
+  const events = new Set(detailed.map(item => String(item.event).toLowerCase()));
+  const forecasts = (footballScan?.matches || []).filter(item =>
+    ['HOME_WIN', 'DRAW', 'AWAY_WIN'].includes(item.prediction)
+    && Date.parse(item.kickoff) > Date.now()
+    && !events.has(String(item.event).toLowerCase())
+  ).sort((a, b) => a.kickoff.slice(0, 10).localeCompare(b.kickoff.slice(0, 10))
+    || (b.confidence || 0) - (a.confidence || 0)).slice(0, 8);
+  if (forecasts.length) {
+    root.append(element('h3', 'Футбол · предварительные прогнозы'));
+    for (const item of forecasts) {
+      const card = element('article', undefined, 'candidate-card');
+      card.append(
+        element('strong', item.event + ' · ' + predictionName(item.event, item.prediction)),
+        element('p', date(item.kickoff) + ' · прогноз по таблице · без виртуальной ставки')
+      );
+      root.append(card);
+    }
+  } else if (!detailed.length) {
+    root.append(element('p', 'Пока нет прогнозов на предстоящие футбольные матчи.', 'muted'));
+  }
+  const link = element('a', 'Открыть прогнозы по баскетболу');
+  link.href = 'basketball.html';
+  root.append(link);
+}
+async function loadFootballScan() {
+  try {
+    const response = await fetch('broad-analysis.json', {cache: 'no-store'});
+    if (response.ok) {
+      const scan = await response.json();
+      if (Array.isArray(scan?.matches)) footballScan = scan;
+    }
+  } catch {
+    // Keep the last successfully loaded scan.
+  }
+  renderSystem();
 }
 function validSystem(raw) { return raw && raw.schema_version===1 && validDate(raw.generated_at) && object(raw); }
 async function loadSystem(manual=false) {
@@ -186,7 +224,7 @@ function renderPaper() { const cards=$('paper-cards'), history=$('paper-history'
 async function loadPaper() { try { const response=await fetch('paper-trading.json',{cache:'no-store'}); const raw=await response.json(); paperSnapshot=response.ok&&raw&&raw.schema_version===1?raw:null; } catch {paperSnapshot=null} renderPaper(); renderSystem(); }
 $('latest').onclick=loadLatest;
 $('report-date').addEventListener('change',loadLatest);
-$('refresh-system').onclick=()=>Promise.all([loadSystem(true),loadPaper()]);
+$('refresh-system').onclick=()=>Promise.all([loadSystem(true),loadPaper(),loadFootballScan()]);
 $('import').onclick=()=>$('report-file').click();
 $('report-file').addEventListener('change',async event=>{
   const file=event.target.files[0];if(!file)return;
@@ -207,5 +245,6 @@ renderSystem();
 renderPaper();
 loadSystem();
 loadPaper();
+loadFootballScan();
 loadReportDates();
 loadLatest();

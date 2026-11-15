@@ -150,6 +150,7 @@ def main():
     from wide_paper_test import evaluate as evaluate_wide_test, record as record_wide_test
     record_wide_test(broad)
     evaluate_wide_test()
+    save_json(broad, BROAD_OUTPUT)
     selected_for_detail = detail_candidates(research, broad)
     # The number is intentionally not fixed: detailed API calls are used only
     # for matches that passed the free first-pass scan.
@@ -244,7 +245,6 @@ def main():
         for fixture in data.get("fixtures", []) if isinstance(fixture, dict)
     ]
     save_json(payload, OUTPUT)
-    save_json(broad, BROAD_OUTPUT)
     from paper_trading import record_forecasts, evaluate
     record_forecasts(payload)
     evaluate(ROOT / "dashboard" / "site-static" / "history.json")
