@@ -81,12 +81,15 @@ def basketball_game(item):
     }
 
 
-def load_nba(day, key):
+def load_nba(day, key, *, include_yesterday=False):
     if not key:
         return []
     local_day = datetime.fromisoformat(day).date()
+    yesterday = (local_day - timedelta(days=1)).isoformat()
     tomorrow = (local_day + timedelta(days=1)).isoformat()
-    provider_dates = [(local_day + timedelta(days=offset)).isoformat() for offset in (-1, 0, 1)]
+    first_offset = -2 if include_yesterday else -1
+    provider_dates = [(local_day + timedelta(days=offset)).isoformat()
+                      for offset in range(first_offset, 2)]
     response = requests.get(
         BALLDONTLIE_SOURCE,
         params=[("dates[]", value) for value in provider_dates] + [("per_page", 100)],
@@ -100,6 +103,9 @@ def load_nba(day, key):
         if isinstance(item, dict):
             match = basketball_game(item)
             if match and (match["date"] == day or (
+                include_yesterday and match["date"] == yesterday
+                and match["status"] in {"FT", "AOT", "FINAL"}
+            ) or (
                 match["date"] == tomorrow and match["status"] in {"NS", "SCHEDULED"}
             )):
                 result.append(match)
@@ -174,8 +180,11 @@ def main(*, record_new=True):
         "matches": [],
     }
     matches = []
+    late_results = []
     try:
-        matches.extend(load_nba(day, os.getenv("BALLDONTLIE_API_KEY")))
+        nba = load_nba(day, os.getenv("BALLDONTLIE_API_KEY"), include_yesterday=True)
+        matches.extend(match for match in nba if match["date"] >= day)
+        late_results = [match for match in nba if match["date"] < day]
     except (requests.RequestException, ValueError):
         payload["collection_status"] = "degraded"
     try:
@@ -209,7 +218,7 @@ def main(*, record_new=True):
     payload["matches"] = [match for match in matches if match["date"] != tomorrow]
     payload["upcoming_matches"] = [match for match in matches if match["date"] == tomorrow]
     save(payload)
-    save_history(payload["matches"])
+    save_history(payload["matches"] + late_results)
     from basketball_model import build as build_model
     analysis = build_model(matches)
     from basketball_paper_trading import publish as publish_paper, update as update_paper
