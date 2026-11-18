@@ -27,15 +27,23 @@ function basketballForecastLine(match, analysis, currentForecast) {
 
   const details = ['Прогноз без ставки: победа ' + team];
   const final = ['FT', 'FINAL', 'AOT'].includes(String(match.status).trim().toUpperCase());
-  const validScore = value => value != null && String(value).trim() !== ''
-    && Number.isInteger(Number(value)) && Number(value) >= 0;
-  if (final && validScore(match.home_score) && validScore(match.away_score)
-      && Number(match.home_score) !== Number(match.away_score)) {
-    const winner = Number(match.home_score) > Number(match.away_score) ? 'HOME_WIN' : 'AWAY_WIN';
+  const winner = basketballFinalOutcome(match);
+  if (winner) {
     details.push(forecast.prediction === winner ? '✓ Прогноз угадан' : '✕ Прогноз не угадан');
   } else {
     details.push(final ? 'Итоговый счёт уточняется' : 'Ждём итоговый счёт');
   }
   line.textContent = details.join(' · ');
   return line;
+}
+
+function basketballFinalOutcome(match) {
+  const final = ['FT', 'FINAL', 'AOT'].includes(String(match.status).trim().toUpperCase());
+  const validScore = value => value != null && String(value).trim() !== ''
+    && Number.isInteger(Number(value)) && Number(value) >= 0;
+  if (final && validScore(match.home_score) && validScore(match.away_score)
+      && Number(match.home_score) !== Number(match.away_score)) {
+    return Number(match.home_score) > Number(match.away_score) ? 'HOME_WIN' : 'AWAY_WIN';
+  }
+  return null;
 }
